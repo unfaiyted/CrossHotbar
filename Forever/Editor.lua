@@ -41,7 +41,7 @@ local CROSSES = {
 }
 local DEFAULT_KEYS = { "PAD2", "PAD4", "PAD1", "PAD3", "PADDRIGHT", "PADDUP", "PADDDOWN", "PADDLEFT",
                        "PADDRIGHT", "PADDUP", "PADDDOWN", "PADDLEFT" }
-local TABS = { "Spells", "Items", "Macros" }
+local TABS = { "Spells", "Actions", "Items", "Macros", "Mounts", "Pets" }
 local VISIBLE = 14
 local ROW_H = 26
 local S = 40          -- (slot size)
@@ -206,7 +206,9 @@ local function MacroEntries()
 end
 
 local function Load()
-   local ok, result = pcall(({ SpellEntries, ItemEntries, MacroEntries })[state.tab])
+   local A = addon.Actions
+   local sources = { SpellEntries, A and A.CommandEntries, ItemEntries, MacroEntries, A and A.MountEntries, A and A.PetEntries }
+   local ok, result = pcall(sources[state.tab] or function() return {} end)
    if not ok then Log("list error: " .. tostring(result)); result = {} end
    table.insert(result, 1, { kind = "empty", name = "Empty a slot", icon = "Interface\\Buttons\\UI-GroupLoot-Pass-Up",
                              group = "" })
@@ -226,6 +228,11 @@ local function Pickup(entry)
       pickup(entry.id)
    elseif entry.kind == "macro" then
       PickupMacro(entry.id)
+   elseif entry.kind == "command" then
+      local index = addon.Actions and addon.Actions.Macro(entry)
+      if index then PickupMacro(index) end
+   elseif entry.kind == "pet" then
+      if C_PetJournal and C_PetJournal.PickupPet then C_PetJournal.PickupPet(entry.id) end
    end
 end
 
@@ -246,6 +253,12 @@ local function CursorEntry()
    elseif kind == "macro" then
       local name, icon = GetMacroInfo(a)
       return name and { kind = "macro", id = a, name = name, icon = icon } or nil
+   elseif kind == "mount" and C_MountJournal and C_MountJournal.GetMountInfoByID then
+      local name, spellID, icon = C_MountJournal.GetMountInfoByID(a)
+      return spellID and { kind = "spell", id = spellID, name = name, icon = icon } or nil
+   elseif kind == "battlepet" and C_PetJournal and C_PetJournal.GetPetInfoByPetID then
+      local _, customName, _, _, _, _, _, name, icon = C_PetJournal.GetPetInfoByPetID(a)
+      return { kind = "pet", id = a, name = customName or name or "Pet", icon = icon }
    end
 end
 
@@ -307,6 +320,14 @@ local function ShowTip()
       local e = entries[state.sel]
       if e and e.kind == "spell" then GameTooltip:SetSpellByID(e.id); shown = true
       elseif e and e.kind == "item" then GameTooltip:SetItemByID(e.id); shown = true
+      elseif e and e.kind == "command" then
+         GameTooltip:SetText(e.name, 1, 1, 1)
+         GameTooltip:AddLine(e.body, 0.8, 0.8, 0.8, true)
+         GameTooltip:AddLine("Placed as the general macro \"" .. ("x:" .. e.name):sub(1, 16) .. "\".", 0.5, 0.5, 0.5, true)
+         shown = true
+      elseif e and e.kind == "pet" then
+         GameTooltip:SetText(e.name, 1, 1, 1)
+         shown = true
       elseif e and e.kind == "macro" then
          local name, _, body = GetMacroInfo(e.id)
          GameTooltip:SetText(name or "Macro", 1, 1, 1)

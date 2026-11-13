@@ -18,4 +18,5 @@ ConfigUI/ConfigUI.xml
 Forever\API.lua
 Forever\ForeverFocus.lua
 Forever\SingleBar.lua
+Forever\Actions.lua
 Forever\Editor.lua
