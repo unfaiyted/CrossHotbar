@@ -76,6 +76,7 @@ function addon:ForeverBarCommand(args)
    if word == "single" then
       if value == "on" then s.singleBar = true elseif value == "off" then s.singleBar = false
       else s.singleBar = not s.singleBar end
+      addon:ForeverLayout()
       print("|cff66ccffCrossHotbar|r: single-bar mode " .. (s.singleBar and "on" or "off") .. ".")
       return true
    elseif word == "fade" then
@@ -90,5 +91,88 @@ end
 function addon:ToggleSingleBar()
    local s = addon:ForeverSettings()
    if s then s.singleBar = not s.singleBar end
+   addon:ForeverLayout()
    return s and s.singleBar
 end
+
+---------------------------------------------------------------------------
+-- Centred: in single-bar mode both side bars sit in one spot, the middle of
+-- the crossbar (only one shows at a time), the divider line goes, and the
+-- set's name ("SET 1") sits where the line was. Frames move out of combat
+-- only (secure frames can't be placed in one): on login, after CrossHotbar
+-- lays its bars out, on toggling, and after a fight if one was in the way.
+---------------------------------------------------------------------------
+local pending = false
+
+-- The middle of a bar's D-pad and face crosses (buttons 1-8), in its own frame's coordinates
+local function GroupCenterX(bar)
+   local left, right
+   local barScale = bar:GetEffectiveScale()
+   for i = 1, 8 do
+      local b = bar.Buttons and bar.Buttons[i]
+      if b and b:GetLeft() then
+         -- (in the bar's own scale: CrossHotbar scales buttons)
+         local k = b:GetEffectiveScale() / barScale
+         local l, r = b:GetLeft() * k, b:GetRight() * k
+         left = left and math.min(left, l) or l
+         right = right and math.max(right, r) or r
+      end
+   end
+   if not (left and bar:GetLeft()) then return nil end
+   return (left + right) / 2 - bar:GetLeft()
+end
+
+local function Place(names, single)
+   local root = addon.Crosshotbar
+   for _, name in ipairs(names) do
+      local bar = _G[name]
+      if bar and root then
+         local dx = 0
+         if single then
+            -- (the crosses' middle onto the crossbar's middle)
+            local mid = GroupCenterX(bar)
+            if mid then dx = bar:GetWidth() / 2 - mid end
+         end
+         bar:ClearAllPoints()
+         bar:SetPoint("CENTER", root, "CENTER", dx, 0)
+      end
+   end
+end
+
+function addon:ForeverLayout()
+   if InCombatLockdown() then pending = true return end
+   pending = false
+   local s = addon:ForeverSettings()
+   if not s or not addon.Crosshotbar then return end
+   local single = s.singleBar and true or false
+   -- (a fresh start from CrossHotbar's own place, then centred)
+   Place(L_BARS, false); Place(R_BARS, false)
+   if single then Place(L_BARS, true); Place(R_BARS, true) end
+   local line = _G.WXHBCrossHotbarMover_Texture
+   if line then line:SetShown(not single) end
+   local status = addon.Crosshotbar.PageStatusFrame
+   if status then
+      status:ClearAllPoints()
+      if single then
+         status:SetPoint("CENTER", addon.Crosshotbar, "CENTER", 0, 0)
+      else
+         status:SetPoint("TOP", addon.Crosshotbar, "BOTTOM", 0, 0)
+      end
+   end
+end
+
+local layoutEvents = CreateFrame("Frame")
+layoutEvents:RegisterEvent("PLAYER_ENTERING_WORLD")
+layoutEvents:RegisterEvent("PLAYER_REGEN_ENABLED")
+layoutEvents:SetScript("OnEvent", function(_, event)
+   if event == "PLAYER_REGEN_ENABLED" and not pending then return end
+   -- (after CrossHotbar's own layout on entering the world)
+   C_Timer.After(0.5, function() addon:ForeverLayout() end)
+end)
+
+addon:AddInitCallback(function()
+   local root = addon.Crosshotbar
+   if root and root.UpdateCrosshotbar then
+      hooksecurefunc(root, "UpdateCrosshotbar", function() addon:ForeverLayout() end)
+   end
+end)
