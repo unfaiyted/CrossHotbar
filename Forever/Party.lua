@@ -426,6 +426,13 @@ local function Probe()
       local pname = parent and parent.GetName and parent:GetName()
       log(("%s [%s] strata=%s level=%s parent=%s"):format(name, tostring(f:GetObjectType()), tostring(f:GetFrameStrata()),
          tostring(f:GetFrameLevel()), (type(pname) == "string" and not Secret(pname)) and pname or "?"))
+      local ok1, eff = pcall(f.GetEffectiveAlpha, f)
+      local ok2, own = pcall(f.GetAlpha, f)
+      local ok3, ignores = pcall(f.IsIgnoringParentAlpha, f)
+      local IF = _G.ImprovedForever
+      log(("   alpha own=%s effective=%s ignoresParent=%s fadeGroup=%s gameHidden=%s"):format(
+         tostring(ok2 and own), tostring(ok1 and eff), tostring(ok3 and ignores),
+         tostring(fades[f] and fades[f]:IsPlaying()), tostring(gameHidden)))
       for _, region in ipairs({ f:GetRegions() }) do
          if region.IsShown and region:IsShown() and region.GetTexture then
             local ok, tex = pcall(region.GetTexture, region)
