@@ -182,7 +182,8 @@ for i = 1, MAX_ROWS do
       a:SetSize(ICON, ICON)
       a:SetPoint("TOPLEFT", r.name, "TOPRIGHT", 3 + (k - 1) * (ICON + 2), 1)
       a.border = a:CreateTexture(nil, "BACKGROUND"); a.border:SetAllPoints()
-      a.icon = a:CreateTexture(nil, "ARTWORK"); a.icon:SetPoint("TOPLEFT", 1, -1); a.icon:SetPoint("BOTTOMRIGHT", -1, 1)
+      a.border:Hide()   -- (no frame round the icons: the icon fills the square)
+      a.icon = a:CreateTexture(nil, "ARTWORK"); a.icon:SetAllPoints()
       a.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
       a.cd = CreateFrame("Cooldown", nil, a, "CooldownFrameTemplate")
       a.cd:SetAllPoints(a.icon)
@@ -333,7 +334,6 @@ local function Auras(r, unit)
       local a, d = r.auras[k], items[k]
       if d then
          a.icon:SetTexture(d.icon)
-         a.border:SetColorTexture(BORDER_MINE[1], BORDER_MINE[2], BORDER_MINE[3], 1)
          a.cd:SetCooldown(d.start, d.duration)
          a.count:SetText((d.stacks and d.stacks > 1) and d.stacks or "")
          a:Show()
