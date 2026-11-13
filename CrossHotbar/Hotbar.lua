@@ -324,7 +324,7 @@ function HotbarMixin:AddVisibilityHandler()
       if newstate then
          for i = 1, 12 do
             local button = self:GetFrameRef('ActionButton'..i)
-            if button.chbIndex >= 9 then
+            if button:GetAttribute("actions") >= 9 then
                if exphide then
                  button:Enable()
                else
@@ -398,7 +398,7 @@ function HotbarMixin:AddExpandHandler()
          self:CallMethod("UpdateVisibility", visibility, 1)
          for i = 1, 12 do
             local button = self:GetFrameRef('ActionButton'..i)
-            if button.chbIndex >= 9 then
+            if button:GetAttribute("actions") >= 9 then
                button:Enable()
             else
                button:Disable()
