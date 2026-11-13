@@ -19,8 +19,8 @@ local ADDON, addon = ...
 
 local MAX_ROWS = 8
 local ROW_W = 170
-local ROW_H = 18          -- (name line + thin bar)
-local BAR_H = 4
+local ROW_H = 24          -- (bevel, name strip, gold line, bar, bevel)
+local BAR_H = 4          -- (inside the bevel: ROW_H - 8 - NAME_H - 1)
 local GOLD = { 1, 0.82, 0.25 }          -- (the default UI's gold trim)
 
 local E = {}
@@ -85,6 +85,37 @@ local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
 title:SetPoint("BOTTOMLEFT", frame, "TOPLEFT", 0, 2)
 title:SetText("Enmity  |cff999999(drag to move; /xhb enmity lock)|r")
 
+-- The default UI's metal trim, drawn in layers (outer to inner), each 1px:
+-- a dark outline; a gold bevel lit top / left and shaded bottom / right;
+-- a deeper gold; an inner shadow. (As the target frame's border.)
+local BEVEL = {
+   { light = { 0.16, 0.10, 0.02, 1 },    dark = { 0.08, 0.05, 0.01, 1 } },
+   { light = { 1.00, 0.90, 0.50, 1 },    dark = { 0.62, 0.43, 0.10, 1 } },
+   { light = { 0.85, 0.64, 0.20, 1 },    dark = { 0.45, 0.30, 0.06, 1 } },
+   { light = { 0.05, 0.03, 0.00, 0.85 }, dark = { 0.05, 0.03, 0.00, 0.85 } },
+}
+
+local function Edge(parent, layer, colour)
+   local t = parent:CreateTexture(nil, "BORDER", nil, layer)
+   t:SetColorTexture(colour[1], colour[2], colour[3], colour[4])
+   return t
+end
+
+-- A bevelled frame round `box` (its edges drawn just inside it)
+local function Bevel(box)
+   for n, c in ipairs(BEVEL) do
+      local i = n - 1
+      local top, left = Edge(box, n, c.light), Edge(box, n, c.light)
+      local bottom, right = Edge(box, n, c.dark), Edge(box, n, c.dark)
+      top:SetPoint("TOPLEFT", i, -i); top:SetPoint("TOPRIGHT", -i, -i); top:SetHeight(1)
+      bottom:SetPoint("BOTTOMLEFT", i, i); bottom:SetPoint("BOTTOMRIGHT", -i, i); bottom:SetHeight(1)
+      left:SetPoint("TOPLEFT", i, -i); left:SetPoint("BOTTOMLEFT", i, i); left:SetWidth(1)
+      right:SetPoint("TOPRIGHT", -i, -i); right:SetPoint("BOTTOMRIGHT", -i, i); right:SetWidth(1)
+   end
+   return #BEVEL
+end
+
+local NAME_H = 12
 local rows = {}
 for i = 1, MAX_ROWS do
    local r = CreateFrame("Frame", nil, frame)
@@ -92,46 +123,52 @@ for i = 1, MAX_ROWS do
    r:SetPoint("TOPLEFT", 0, -(i - 1) * (ROW_H + 3))
    -- (the aggro marker: a coloured diamond set in a gold one, a dark ring between)
    r.markerGold = r:CreateTexture(nil, "ARTWORK", nil, 1)
-   r.markerGold:SetSize(11, 11)
-   r.markerGold:SetPoint("CENTER", r, "TOPLEFT", 5, -6)
+   r.markerGold:SetSize(12, 12)
+   r.markerGold:SetPoint("CENTER", r, "LEFT", 6, 0)
    r.markerGold:SetTexture("Interface\\Buttons\\WHITE8x8")
-   r.markerGold:SetVertexColor(GOLD[1], GOLD[2], GOLD[3], 1)
+   r.markerGold:SetGradient("VERTICAL", CreateColor(0.62, 0.43, 0.10, 1), CreateColor(1.0, 0.90, 0.50, 1))
    r.markerGold:SetRotation(math.rad(45))
    r.markerRing = r:CreateTexture(nil, "ARTWORK", nil, 2)
    r.markerRing:SetSize(9, 9)
    r.markerRing:SetPoint("CENTER", r.markerGold)
    r.markerRing:SetTexture("Interface\\Buttons\\WHITE8x8")
-   r.markerRing:SetVertexColor(0.1, 0.07, 0.02, 1)
+   r.markerRing:SetVertexColor(0.08, 0.05, 0.01, 1)
    r.markerRing:SetRotation(math.rad(45))
    r.marker = r:CreateTexture(nil, "ARTWORK", nil, 3)
    r.marker:SetSize(7, 7)
    r.marker:SetPoint("CENTER", r.markerGold)
    r.marker:SetTexture("Interface\\Buttons\\WHITE8x8")
    r.marker:SetRotation(math.rad(45))
-   r.name = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-   r.name:SetPoint("TOPLEFT", 14, 1)
-   r.name:SetPoint("RIGHT", 0, 0)
-   r.name:SetJustifyH("LEFT")
+   -- (the box: a bevelled gold frame round a name strip and a health bar)
+   local box = CreateFrame("Frame", nil, r)
+   box:SetPoint("TOPLEFT", 15, 0)
+   box:SetPoint("BOTTOMRIGHT", 0, 0)
+   local inset = Bevel(box)
+   local strip = box:CreateTexture(nil, "BACKGROUND")
+   strip:SetPoint("TOPLEFT", inset, -inset)
+   strip:SetPoint("TOPRIGHT", -inset, -inset)
+   strip:SetHeight(NAME_H)
+   strip:SetTexture("Interface\\Buttons\\WHITE8x8")
+   strip:SetGradient("HORIZONTAL", CreateColor(0.55, 0.06, 0.05, 0.95), CreateColor(0.18, 0.02, 0.02, 0.95))
+   -- (the gold line between name and bar)
+   local line = box:CreateTexture(nil, "BORDER", nil, 2)
+   line:SetPoint("TOPLEFT", strip, "BOTTOMLEFT", 0, 0)
+   line:SetPoint("TOPRIGHT", strip, "BOTTOMRIGHT", 0, 0)
+   line:SetHeight(1)
+   line:SetColorTexture(0.85, 0.64, 0.20, 1)
+   r.name = box:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+   r.name:SetPoint("LEFT", strip, "LEFT", 3, 0)
+   r.name:SetPoint("RIGHT", strip, "RIGHT", -3, 0)
+   r.name:SetJustifyH("CENTER")
    r.name:SetWordWrap(false)
    r.name:SetShadowOffset(1, -1)
    r.name:SetShadowColor(0, 0, 0, 1)
-   -- (the health bar in a 1px gold frame)
-   r.trim = CreateFrame("Frame", nil, r, "BackdropTemplate")
-   r.trim:SetPoint("BOTTOMLEFT", 13, -1)
-   r.trim:SetPoint("BOTTOMRIGHT", 1, -1)
-   r.trim:SetHeight(BAR_H + 2)
-   if r.trim.SetBackdrop then
-      r.trim:SetBackdrop({ edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
-      r.trim:SetBackdropBorderColor(GOLD[1], GOLD[2], GOLD[3], 0.95)
-   end
-   r.bar = CreateFrame("StatusBar", nil, r)
-   r.bar:SetPoint("BOTTOMLEFT", 14, 0)
-   r.bar:SetPoint("BOTTOMRIGHT", 0, 0)
-   r.bar:SetHeight(BAR_H)
-   r.bar:SetFrameLevel(r.trim:GetFrameLevel() + 1)
-   r.bar:SetStatusBarTexture("Interface\\Buttons\\WHITE8x8")
-   r.bar:SetStatusBarColor(0.85, 0.2, 0.15, 1)
-   local bg = r.bar:CreateTexture(nil, "BACKGROUND"); bg:SetAllPoints(); bg:SetColorTexture(0, 0, 0, 0.55)
+   r.bar = CreateFrame("StatusBar", nil, box)
+   r.bar:SetPoint("TOPLEFT", line, "BOTTOMLEFT", 0, 0)
+   r.bar:SetPoint("BOTTOMRIGHT", -inset, inset)
+   r.bar:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
+   r.bar:SetStatusBarColor(0.12, 0.72, 0.1, 1)
+   local bg = r.bar:CreateTexture(nil, "BACKGROUND"); bg:SetAllPoints(); bg:SetColorTexture(0.03, 0.03, 0.03, 0.9)
    rows[i] = r
 end
 
@@ -176,7 +213,7 @@ local function Draw()
       if e then
          r.name:SetText(UnitName(e.unit) or "?")
          local targeted = Plain(UnitIsUnit(e.unit, "target"))
-         r.name:SetTextColor(1, targeted and 0.85 or 1, targeted and 0.3 or 1)
+         if targeted then r.name:SetTextColor(1, 1, 1) else r.name:SetTextColor(1, 0.82, 0) end
          -- (health may be secret: straight into the bar)
          r.bar:SetMinMaxValues(0, UnitHealthMax(e.unit) or 1)
          r.bar:SetValue(UnitHealth(e.unit) or 0)
