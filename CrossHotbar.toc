@@ -14,3 +14,5 @@ CrossHotbar/CrossHotbar.xml
 GroupNavigator/GroupNavigator.xml
 GamePad/GamePad.xml
 ConfigUI/ConfigUI.xml
+
+Forever\ForeverFocus.lua

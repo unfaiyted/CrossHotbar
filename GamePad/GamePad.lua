@@ -214,7 +214,8 @@ function GamePadMixin:ClearActions()
 end
 
 function GamePadMixin:ConfigActions()
-   for button, attributes in pairs(config.PadActions) do
+   -- (Forever: keys its Gamepad UI needs are left to it, Forever/ForeverFocus.lua)
+   for button, attributes in pairs(addon.ForeverPadActions and addon:ForeverPadActions(config.PadActions) or config.PadActions) do
       if button == "FACED" then
          self.SpellTargetConfirmButton = attributes.BIND
       end
