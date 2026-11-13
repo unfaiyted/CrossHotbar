@@ -379,21 +379,33 @@ end)
 local function Probe()
    local log = addon.ForeverLog and function(m) addon:ForeverLog("party probe: " .. m) end or print
    local n = 0
+   -- (every shown frame over the game's party frames' area, whatever its name)
+   local area = _G.CompactPartyFrame or _G.PartyFrame
+   local L, B, W, H
+   if area and area.GetRect then L, B, W, H = area:GetRect() end
+   if not L then log("no party frame area"); return end
+   local scale = area:GetEffectiveScale()
+   local aL, aB, aR, aT = L * scale, B * scale, (L + W) * scale, (B + H) * scale
+   log(("area %s: %d,%d - %d,%d"):format(area:GetName() or "?", aL, aB, aR, aT))
    local function look(f)
+      if not (f.IsVisible and f:IsVisible() and f.GetRect) then return end
+      local l, b, w, h = f:GetRect()
+      if not l or Secret(l) then return end
+      local k = f:GetEffectiveScale()
+      local fl, fb, fr, ft = l * k, b * k, (l + w) * k, (b + h) * k
+      if fr < aL or fl > aR or ft < aB or fb > aT then return end
+      if w * k > (aR - aL) * 3 then return end   -- (whole-screen frames)
       local name = f.GetName and f:GetName()
-      if type(name) ~= "string" or Secret(name) then return end
-      if not (name:find("Party") or name:find("Select") or name:find("Highlight") or name:find("SoftTarget")) then return end
-      if not (f.IsVisible and f:IsVisible()) then return end
-      local alpha = f.GetEffectiveAlpha and f:GetEffectiveAlpha() or 1
-      if Secret(alpha) or alpha <= 0.05 then return end
+      if type(name) ~= "string" or Secret(name) then name = "(unnamed)" end
+      if name:find("^CHBParty") then return end
       local parent = f:GetParent()
       local pname = parent and parent.GetName and parent:GetName()
-      log(("%s alpha=%.2f strata=%s parent=%s"):format(name, alpha, tostring(f:GetFrameStrata()),
-         (type(pname) == "string" and not Secret(pname)) and pname or "?"))
+      log(("%s [%s] strata=%s level=%s parent=%s"):format(name, tostring(f:GetObjectType()), tostring(f:GetFrameStrata()),
+         tostring(f:GetFrameLevel()), (type(pname) == "string" and not Secret(pname)) and pname or "?"))
       n = n + 1
    end
    local f = EnumerateFrames()
-   while f and n < 60 do
+   while f and n < 80 do
       pcall(look, f)
       f = EnumerateFrames(f)
    end
