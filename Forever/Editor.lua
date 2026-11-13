@@ -2,7 +2,8 @@
 -- the gamepad (or the mouse / drag and drop).
 --
 --   1. The list: what can go on a bar (Spells, Items, Macros; D-pad
---      left / right), a tooltip of the one highlighted. A takes it.
+--      left / right; right stick or D-pad up / down to choose), a tooltip of
+--      the one highlighted. A takes it.
 --   2. The crossbar, as the game draws it: [L2 D-pad][L2 face]  [R2 D-pad]
 --      [R2 face], each slot with its pad button. Hold L2 / R2 (L2 then R2,
 --      R2 then L2: the WXHB bars) and press the button: it goes there, and
@@ -657,7 +658,9 @@ local DEAD, FIRST, REPEAT = 0.5, 0.35, 0.09
 local stickNames = {}
 local function OnStick(_, stick, x, y)
    if not stickNames[stick] then stickNames[stick] = true; Log("stick name: " .. tostring(stick)) end
-   if stick == "Left" or stick == "LStick" or stick == "Movement" or stick == "Move" then
+   -- (the left stick stays the game's, for moving; it reports "Gyro" and
+   -- "Look", the right stick: that one scrolls)
+   if stick == "Look" or stick == "Right" or stick == "Left" or stick == "Move" then
       state.stickX, state.stickY = x or 0, y or 0
    end
 end

@@ -164,6 +164,21 @@ function addon:ForeverFocusReleased()
    return released
 end
 
+-- A pad button CrossHotbar binds is held: wait. (Releasing now would take its
+-- binding away mid-press, so its release goes nowhere: e.g. a hold-to-peek
+-- map opens on the press, the game counts the map as a window, and the map
+-- never gets the release that closes it.)
+local function PadKeyHeld()
+   if not IsKeyDown then return false end
+   local pad = addon.Config and addon.Config.PadActions
+   if not pad then return false end
+   for _, attributes in pairs(pad) do
+      local key = attributes.BIND
+      if key and key ~= "" and IsKeyDown(key) then return true end
+   end
+   return false
+end
+
 local lastWhy
 local watch = CreateFrame("Frame")
 local since = 0
@@ -181,7 +196,7 @@ watch:SetScript("OnUpdate", function(_, elapsed)
    end
    if world and released then
       Take(why)
-   elseif not world and not released then
+   elseif not world and not released and not PadKeyHeld() then
       Release(why)
    end
 end)
