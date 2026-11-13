@@ -375,9 +375,30 @@ holder:SetScript("OnUpdate", function(_, elapsed)
    end
 end)
 
+-- /xhb party probe: what's still drawn round the party (for the debug log)
+local function Probe()
+   local log = addon.ForeverLog and function(m) addon:ForeverLog("party probe: " .. m) end or print
+   local n = 0
+   local f = EnumerateFrames()
+   while f and n < 60 do
+      local name = f.GetName and f:GetName()
+      if name and (name:find("Party") or name:find("Select") or name:find("Highlight") or name:find("SoftTarget"))
+         and f.IsVisible and f:IsVisible() and (f:GetEffectiveAlpha() or 0) > 0.05 then
+         local parent = f:GetParent()
+         log(("%s alpha=%.2f strata=%s parent=%s"):format(name, f:GetEffectiveAlpha(), tostring(f:GetFrameStrata()),
+            tostring(parent and parent.GetName and parent:GetName())))
+         n = n + 1
+      end
+      f = EnumerateFrames(f)
+   end
+   log("done (" .. n .. ")")
+   print("|cff66ccffCrossHotbar|r: party probe saved: /reload, then tell Claude.")
+end
+
 function addon:PartyCommand(value)
    local s = Settings()
    if not s then return end
+   if value == "probe" then return Probe() end
    if value == "lock" then
       s.partyLocked = not s.partyLocked
       print("|cff66ccffCrossHotbar|r: party list " .. (s.partyLocked and "locked." or "unlocked: drag it where you want it."))
