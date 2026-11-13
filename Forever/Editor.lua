@@ -349,6 +349,7 @@ local function LegendText()
          Glyph("PADDUP") .. Glyph("PADDDOWN") .. " choose",
          Glyph("PADDLEFT") .. Glyph("PADDRIGHT") .. " category",
          Glyph("PAD1") .. " take",
+         Glyph("PAD4") .. " one bar " .. ((addon.ForeverSettings and addon:ForeverSettings() and addon:ForeverSettings().singleBar) and "on" or "off"),
          Glyph("PADFORWARD") .. " Improved Forever",
          Glyph("PAD2") .. " close",
       }
@@ -628,6 +629,10 @@ local function OnPad(_, key)
       return
    end
    if key == "PAD2" then Close()
+   elseif key == "PAD4" and addon.ToggleSingleBar then
+      local on = addon:ToggleSingleBar()
+      Say("single-bar mode " .. (on and "on" or "off") .. ".")
+      Refresh()
    elseif key == "PADFORWARD" then
       local IF = _G.ImprovedForever
       if IF and IF.Menu and IF.Menu.Toggle then Close(); IF.Menu.Toggle() end
@@ -929,7 +934,10 @@ end
 
 SLASH_CROSSHOTBAREDITOR1 = "/xhb"
 SLASH_CROSSHOTBAREDITOR2 = "/crossbar"
-SlashCmdList.CROSSHOTBAREDITOR = function() E.Toggle() end
+SlashCmdList.CROSSHOTBAREDITOR = function(msg)
+   if msg and msg:find("%S") and addon.ForeverBarCommand and addon:ForeverBarCommand(msg) then return end
+   E.Toggle()
+end
 
 ---------------------------------------------------------------------------
 -- The game's own Bind mode (Spellbook / bags -> Bind, then a press): it
