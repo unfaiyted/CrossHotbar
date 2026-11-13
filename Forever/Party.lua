@@ -379,16 +379,22 @@ end)
 local function Probe()
    local log = addon.ForeverLog and function(m) addon:ForeverLog("party probe: " .. m) end or print
    local n = 0
+   local function look(f)
+      local name = f.GetName and f:GetName()
+      if type(name) ~= "string" or Secret(name) then return end
+      if not (name:find("Party") or name:find("Select") or name:find("Highlight") or name:find("SoftTarget")) then return end
+      if not (f.IsVisible and f:IsVisible()) then return end
+      local alpha = f.GetEffectiveAlpha and f:GetEffectiveAlpha() or 1
+      if Secret(alpha) or alpha <= 0.05 then return end
+      local parent = f:GetParent()
+      local pname = parent and parent.GetName and parent:GetName()
+      log(("%s alpha=%.2f strata=%s parent=%s"):format(name, alpha, tostring(f:GetFrameStrata()),
+         (type(pname) == "string" and not Secret(pname)) and pname or "?"))
+      n = n + 1
+   end
    local f = EnumerateFrames()
    while f and n < 60 do
-      local name = f.GetName and f:GetName()
-      if name and (name:find("Party") or name:find("Select") or name:find("Highlight") or name:find("SoftTarget"))
-         and f.IsVisible and f:IsVisible() and (f:GetEffectiveAlpha() or 0) > 0.05 then
-         local parent = f:GetParent()
-         log(("%s alpha=%.2f strata=%s parent=%s"):format(name, f:GetEffectiveAlpha(), tostring(f:GetFrameStrata()),
-            tostring(parent and parent.GetName and parent:GetName())))
-         n = n + 1
-      end
+      pcall(look, f)
       f = EnumerateFrames(f)
    end
    log("done (" .. n .. ")")
