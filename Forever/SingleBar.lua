@@ -80,6 +80,9 @@ function addon:ForeverBarCommand(args)
       addon:ForeverLayout()
       print("|cff66ccffCrossHotbar|r: single-bar mode " .. (s.singleBar and "on" or "off") .. ".")
       return true
+   elseif word == "party" then
+      if addon.PartyCommand then addon:PartyCommand(value) end
+      return true
    elseif word == "enmity" then
       if addon.EnmityCommand then addon:EnmityCommand(value) end
       return true

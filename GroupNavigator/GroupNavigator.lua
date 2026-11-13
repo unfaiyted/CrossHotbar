@@ -285,6 +285,7 @@ function GroupNavigatorMixin:AddUnitFrameRefs()
                
                local framePrefixes = {
                   "CompactPartyFrameMember",
+                  "CHBPartyUnitButton",            -- (this fork's party list, Forever/Party.lua)
                   "CellPartyFrameHeaderUnitButton",
                   "Grid2LayoutHeader1UnitButton",
                   "ElvUF_PartyGroup1UnitButton",
