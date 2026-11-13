@@ -35,11 +35,58 @@ function addon:ForeverPadActions(padactions)
    return filtered
 end
 
+-- A small log of what this file did, for debugging from outside the game:
+-- CrossHotbar_DB.ForeverLog (written on /reload or logout), newest last
+local LOG_MAX = 200
+function addon:ForeverLog(msg)
+   if type(CrossHotbar_DB) ~= "table" then return end
+   local log = CrossHotbar_DB.ForeverLog
+   if type(log) ~= "table" then log = {}; CrossHotbar_DB.ForeverLog = log end
+   log[#log + 1] = date("%H:%M:%S") .. string.format(".%03d ", (GetTime() * 1000) % 1000) .. msg
+   while #log > LOG_MAX do table.remove(log, 1) end
+end
+
+-- The game's bind mode (Spellbook / bags -> Bind): its own overlay, opened
+-- with only the core binding set active, so it's checked by what's shown.
+-- (GamepadMainActionBarFrame is parked hidden by CrossHotbar; visible means
+-- the game brought it back for binding.)
+local STUCK = 20          -- (the main bar up this long with no edit frame: the game left it, hide it again)
+local barSince = nil
+local function BindModeOpen()
+   local edit = _G.GamepadActionBarEditFrame
+   if edit and edit:IsVisible() then barSince = nil; return true, "edit frame" end
+   local bar = _G.GamepadMainActionBarFrame
+   if bar and bar:IsVisible() then
+      barSince = barSince or GetTime()
+      if GetTime() - barSince > STUCK and not InCombatLockdown() and addon.Crosshotbar
+         and addon.Crosshotbar.HideGamepadBar then
+         addon:ForeverLog("main bar left visible " .. STUCK .. "s: hiding it again")
+         addon.Crosshotbar:HideGamepadBar(bar)
+         barSince = nil
+         return false
+      end
+      return true, "main bar"
+   end
+   barSince = nil
+   return false
+end
+
 -- The game's focus: true while only its core bindings are active (the world)
+-- and its bind mode isn't open
 local function InWorld()
+   local binding, why = BindModeOpen()
+   if binding then return false, "bind mode (" .. why .. ")" end
    local manager = _G.GamepadSharedUtility and GamepadSharedUtility.InputBindingManager
-   if not (manager and manager.IsOnlyCoreBindingSetActive) then return true end
-   return manager:IsOnlyCoreBindingSetActive() and true or false
+   if not (manager and manager.IsOnlyCoreBindingSetActive) then return true, "no binding manager" end
+   if manager:IsOnlyCoreBindingSetActive() then return true, "world" end
+   return false, "game window / menu"
+end
+
+-- CrossHotbar's own bars out of sight while the game binds (its bar is the
+-- target then); our frame, so its alpha is ours to set
+local function ShowBars(shown)
+   local root = _G.Crosshotbar
+   if root then root:SetAlpha(shown and 1 or 0) end
 end
 
 local HOTBARS = {
@@ -50,9 +97,11 @@ local HOTBARS = {
 
 local released = false
 
-local function Release()
+local function Release(why)
    local pad = addon.GamePad
    if not pad or InCombatLockdown() then return end
+   addon:ForeverLog("release: " .. tostring(why))
+   ShowBars(not (why and why:find("^bind mode")))
    pad:SetAttribute("state-expanded", 0)
    pad:SetAttribute("state-trigger", 4)   -- (4: no trigger held; hotbars drop their keys)
    pad:ClearActions()
@@ -66,9 +115,11 @@ local function Release()
    released = true
 end
 
-local function Take()
+local function Take(why)
    local pad = addon.GamePad
    if not pad or InCombatLockdown() then return end
+   addon:ForeverLog("take: " .. tostring(why))
+   ShowBars(true)
    released = false
    pad:ConfigActions()   -- (rebinds everything, the GroupNavigator through the trigger state)
 end
@@ -84,11 +135,11 @@ watch:SetScript("OnUpdate", function(_, elapsed)
    if since < 0.1 then return end
    since = 0
    if not addon.GamePad or InCombatLockdown() then return end
-   local world = InWorld()
+   local world, why = InWorld()
    if world and released then
-      Take()
+      Take(why)
    elseif not world and not released then
-      Release()
+      Release(why)
    end
 end)
 
@@ -96,8 +147,10 @@ local events = CreateFrame("Frame")
 events:RegisterEvent("PLAYER_REGEN_DISABLED")
 events:SetScript("OnEvent", function()
    -- (a fight: the crossbar on, whatever has the focus; it can't change until it's over)
+   ShowBars(true)
    if released then
       released = false
+      addon:ForeverLog("take: combat")
       local pad = addon.GamePad
       if pad then pad:ConfigActions() end
    end
