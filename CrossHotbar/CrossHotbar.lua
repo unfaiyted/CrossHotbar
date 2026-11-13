@@ -138,7 +138,21 @@ function CrossHotbarMixin:ApplyConfig()
    bindings["HOTBARBTN11"][nbindings] = bindings["HOTBARBTN3"][1]
    bindings["HOTBARBTN12"][nbindings] = bindings["HOTBARBTN4"][1]
    
-   WXHBLHotbar1:AddOverrideKeyBindings(bindings)
+   -- (Forever fork: the expanded slots mirror the controller. L2's are on the
+   -- D-pad (right, up, down, left, as HOTBARBTN5-8), R2's stay on the face
+   -- buttons (as HOTBARBTN1-4, above).)
+   local lbindings = bindings
+   if addon.MirrorExpanded ~= false then
+      lbindings = {}
+      for action, list in pairs(bindings) do lbindings[action] = list end
+      for i = 0, 3 do
+         local list = CopyTable(bindings["HOTBARBTN" .. (9 + i)])
+         list[nbindings] = bindings["HOTBARBTN" .. (5 + i)][1]
+         lbindings["HOTBARBTN" .. (9 + i)] = list
+      end
+   end
+
+   WXHBLHotbar1:AddOverrideKeyBindings(lbindings)
    WXHBRHotbar1:AddOverrideKeyBindings(bindings)
    WXHBLRHotbar1:AddOverrideKeyBindings(bindings)
    WXHBRLHotbar1:AddOverrideKeyBindings(bindings)

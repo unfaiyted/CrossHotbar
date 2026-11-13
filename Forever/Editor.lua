@@ -63,22 +63,22 @@ end
 ---------------------------------------------------------------------------
 -- Buttons, labels
 ---------------------------------------------------------------------------
-local function SlotKeys()
+-- The pad button of each of a bar's 12 slots: 1-8 from CrossHotbar's
+-- trigger actions; 9-12 (expanded) as CrossHotbar.lua's ApplyConfig binds
+-- them: the face buttons (HOTBARBTN1-4), the L2 bar's on the D-pad
+-- (HOTBARBTN5-8) in this fork
+local function SlotKeys(row)
    local keys = {}
    local pad = addon.Config and addon.Config.PadActions
    if pad then
-      -- (1-8 from the plain trigger actions; 9-12, the expanded slots, from
-      -- whichever modifier's trigger action names them)
       for _, attributes in pairs(pad) do
-         for field, value in pairs(attributes) do
-            if type(field) == "string" and field:find("TRIGACTION$") and attributes.BIND then
-               local n = tonumber(tostring(value):match("^HOTBARBTN(%d+)$"))
-               if n and (field == "TRIGACTION" or not keys[n]) then keys[n] = attributes.BIND end
-            end
-         end
+         local n = tonumber(tostring(attributes.TRIGACTION or ""):match("^HOTBARBTN(%d+)$"))
+         if n and n <= 8 and attributes.BIND then keys[n] = attributes.BIND end
       end
    end
-   for n = 1, 12 do keys[n] = keys[n] or DEFAULT_KEYS[n] end
+   for n = 1, 8 do keys[n] = keys[n] or DEFAULT_KEYS[n] end
+   local from = (row == 1 and addon.MirrorExpanded ~= false) and 5 or 1
+   for i = 0, 3 do keys[9 + i] = keys[from + i] end
    return keys
 end
 
@@ -486,7 +486,6 @@ Refresh = function()
       prompt:SetText("Hold " .. Glyph("PADLTRIGGER", 22) .. " or " .. Glyph("PADRTRIGGER", 22) .. " to show that bar, then press the button.\n"
          .. "|cffaaaaaaBoth (one then the other): the WXHB bars.   Tap twice and hold: the expanded slots.|r")
       local lit = nil
-      local keys = SlotKeys()
       if not (slotsUI[state.cursor] and slotsUI[state.cursor].visible) then
          for n, s in ipairs(slotsUI) do if s.visible then state.cursor = n break end end
       end
@@ -497,7 +496,7 @@ Refresh = function()
             s.icon:SetTexture(texture or nil)
             s.icon:SetShown(texture ~= nil)
             s.empty:SetShown(texture == nil)
-            local key = keys[s.index]
+            local key = SlotKeys(s.row)[s.index]
             s.key:SetText(key and Glyph(key, 20) or "")
             s.light:SetShown(state.cursor == n)
             s:SetAlpha((not lit or s.row == lit) and 1 or 0.3)
@@ -608,7 +607,7 @@ local function OnPad(_, key)
       local row = TriggerRow()
       if row then
          if state.needRelease then return end
-         local keys = SlotKeys()
+         local keys = SlotKeys(row)
          local first, last = 1, 8
          if state.expanded and row <= 2 then first, last = 9, 12 end
          for index = first, last do
@@ -962,7 +961,7 @@ local function Mirror(storage)
    if entry then
       local set = ActiveSet()
       Place(entry, set, row, UNIT_TO_INDEX[n])
-      Say(("bound to set %d, %s + %s."):format(set, ROWS[row].label, Glyph(SlotKeys()[UNIT_TO_INDEX[n]] or "?", 14)))
+      Say(("bound to set %d, %s + %s."):format(set, ROWS[row].label, Glyph(SlotKeys(row)[UNIT_TO_INDEX[n]] or "?", 14)))
    end
 end
 
