@@ -402,7 +402,11 @@ holder:SetScript("OnUpdate", function(_, elapsed)
    sweep = sweep + elapsed
    if sweep > 1 then
       sweep = 0
-      if gameHidden then pcall(GameFrames, true) end
+      if gameHidden then
+         pcall(GameFrames, true)
+         local box = addon.GroupNavigator and addon.GroupNavigator.SoftTargetFrame
+         if box and box:GetAlpha() ~= 0 then box:SetAlpha(0) end
+      end
    end
    since = since + elapsed
    if since < 0.15 then return end
