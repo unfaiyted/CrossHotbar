@@ -668,12 +668,18 @@ end
 
 local function StickTick(_, elapsed)
    local x, y = state.stickX, state.stickY
+   -- (the D-pad held in the list: repeats, like a held stick)
+   if state.mode == "list" and IsKeyDown then
+      if IsKeyDown("PADDUP") then y = 1 elseif IsKeyDown("PADDDOWN") then y = -1 end
+   end
    local dir
    if math.abs(y) >= DEAD and math.abs(y) >= math.abs(x) then dir = y > 0 and "up" or "down"
    elseif math.abs(x) >= DEAD then dir = x > 0 and "right" or "left" end
    if not dir then state.stickDir, state.stickWait = nil, 0 return end
    if dir ~= state.stickDir then
+      -- (the press itself already moved one: repeats start after FIRST)
       state.stickDir, state.stickWait = dir, FIRST
+      return
    else
       state.stickWait = (state.stickWait or 0) - elapsed
       if state.stickWait > 0 then return end
