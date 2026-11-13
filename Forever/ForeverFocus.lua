@@ -98,10 +98,38 @@ local HOTBARS = {
 
 local released = false
 
+-- What the game's bind screen holds (its fields, a level deep), logged as it
+-- opens: to learn where the pending spell / item is kept
+local function DumpBindMode()
+   local seen = 0
+   local function dump(prefix, t, depth)
+      for k, v in pairs(t) do
+         local kind = type(v)
+         if kind == "string" or kind == "number" or kind == "boolean" then
+            addon:ForeverLog("bindmode " .. prefix .. tostring(k) .. " = " .. tostring(v))
+            seen = seen + 1
+         elseif kind == "table" and depth > 0 and type(k) == "string" and not (v.GetObjectType) then
+            dump(prefix .. k .. ".", v, depth - 1)
+         end
+         if seen > 80 then return end
+      end
+   end
+   for _, name in ipairs({ "GamepadActionBarEditFrame", "GamepadMainActionBarFrame" }) do
+      local f = _G[name]
+      if f and f:IsVisible() then
+         addon:ForeverLog("bindmode frame " .. name)
+         pcall(dump, name .. ".", f, 1)
+      end
+   end
+   local kind, a, b, c = GetCursorInfo()
+   addon:ForeverLog("bindmode cursor " .. tostring(kind) .. " " .. tostring(a) .. " " .. tostring(b) .. " " .. tostring(c))
+end
+
 local function Release(why)
    local pad = addon.GamePad
    if not pad or InCombatLockdown() then return end
    addon:ForeverLog("release: " .. tostring(why))
+
    ShowBars(not (why and why:find("^bind mode")))
    pad:SetAttribute("state-expanded", 0)
    pad:SetAttribute("state-trigger", 4)   -- (4: no trigger held; hotbars drop their keys)
@@ -129,6 +157,7 @@ function addon:ForeverFocusReleased()
    return released
 end
 
+local lastWhy
 local watch = CreateFrame("Frame")
 local since = 0
 watch:SetScript("OnUpdate", function(_, elapsed)
@@ -137,6 +166,12 @@ watch:SetScript("OnUpdate", function(_, elapsed)
    since = 0
    if not addon.GamePad or InCombatLockdown() then return end
    local world, why = InWorld()
+   if why ~= lastWhy then
+      local binding = why and why:find("^bind mode") ~= nil
+      if binding then addon:ForeverLog("focus: " .. why); pcall(DumpBindMode) end
+      if released then ShowBars(not binding) end
+      lastWhy = why
+   end
    if world and released then
       Take(why)
    elseif not world and not released then
