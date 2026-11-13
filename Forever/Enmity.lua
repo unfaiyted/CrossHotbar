@@ -306,6 +306,39 @@ local function Apply(guid, spellID, info, now)
    list[spellID] = { icon = SpellIcon(spellID), start = now, duration = info[1], stacks = stacks }
 end
 
+-- Close enough for the area debuffs (Thunder Clap, the shouts: ~10 yards)?
+-- The game's ~10 yard check if it answers plainly; else in melee reach of
+-- one of your melee abilities (stricter: may miss one at 6-10 yards, never
+-- marks a far one). Neither works: not marked. Which one: in the debug log.
+local MELEE_SPELLS = { 1715, 78, 284, 285, 1608, 11564, 11565, 11566, 11567, 772 }   -- (Hamstring, Heroic Strike ranks, Rend)
+local rangeMethod
+
+-- A plain yes (true / 1), else no (nil, false, 0, or a secret)
+local function Yes(v)
+   if v == nil or (issecretvalue and issecretvalue(v)) then return false end
+   return v == true or v == 1
+end
+
+-- Marked if either check says it's close (neither says so wrongly, so the
+-- union adds no false marks; the melee one fills in if the other is silent)
+local function Close(unit)
+   if CheckInteractDistance then
+      local ok, near = pcall(CheckInteractDistance, unit, 3)
+      if ok and Yes(near) then rangeMethod = "~10 yd"; return true end
+   end
+   local inRange = (C_Spell and C_Spell.IsSpellInRange) or IsSpellInRange
+   if inRange then
+      for _, spellID in ipairs(MELEE_SPELLS) do
+         if IsPlayerSpell and IsPlayerSpell(spellID) then
+            local ok, r = pcall(inRange, spellID, unit)
+            if ok and Yes(r) then rangeMethod = "melee reach"; return true end
+            break
+         end
+      end
+   end
+   return false
+end
+
 local casts = CreateFrame("Frame")
 casts:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
 casts:SetScript("OnEvent", function(_, _, _, _, spellID)
@@ -313,7 +346,16 @@ casts:SetScript("OnEvent", function(_, _, _, _, spellID)
    if not info then return end
    local now = GetTime()
    if info[2] then
-      for _, e in ipairs(list) do Apply(PlainValue(UnitGUID(e.unit)), spellID, info, now) end
+      local marked = 0
+      for _, e in ipairs(list) do
+         if Close(e.unit) then
+            Apply(PlainValue(UnitGUID(e.unit)), spellID, info, now)
+            marked = marked + 1
+         end
+      end
+      if addon.ForeverLog then
+         addon:ForeverLog(("area debuff %d: %d of %d marked, range by %s"):format(spellID, marked, #list, tostring(rangeMethod)))
+      end
    elseif UnitExists("target") and UnitCanAttack("player", "target") then
       Apply(PlainValue(UnitGUID("target")), spellID, info, now)
    end
