@@ -168,6 +168,7 @@ function HotbarMixin:AddActionBar()
       self.Buttons[i] = CreateFrame("CheckButton", self.BtnPrefix .. i, self, "ActionBarButtonTemplate, SecureActionButtonTemplate")
       
       self.Buttons[i]:SetID(i)
+      self.Buttons[i].chbIndex = i   -- (its place in the bar; the ID can be 0 on Forever, Forever/NativeSlots.lua)
       self.Buttons[i]:SetAttributeNoHandler("actions", i)
       self.Buttons[i]:SetAttribute("checkmouseovercast", true)
       self.Buttons[i]:SetAttribute("useOnKeyDown", true)
@@ -199,7 +200,7 @@ function HotbarMixin:AddActionBar()
    end
    
    for i,button in ipairs(self.Buttons) do
-      local index = self.Buttons[i]:GetID()
+      local index = self.Buttons[i].chbIndex
       SecureHandlerSetFrameRef(self, 'ActionButton'..index, button)
    end
    SecureHandlerSetFrameRef(self, 'ActionBar', self)
@@ -213,7 +214,7 @@ end
 
 function HotbarMixin:AddOverrideKeyBindings(ConfigBindings)
    for i,button in ipairs(self.Buttons) do
-      local index = button:GetID()
+      local index = button.chbIndex
       for j, key in ipairs(ConfigBindings["HOTBARBTN"..index]) do
          button:SetAttribute('over_key'..j, key[1])
          button:SetAttribute('over_hotkey'..j, key[2])
@@ -279,7 +280,7 @@ function HotbarMixin:UpdateVisibility(isshown, expanded)
    if isshown then
       for i, button in ipairs(self.Buttons) do
          if expanded == 1 then
-            if button:GetID() >= 9 then 
+            if button.chbIndex >= 9 then 
                button:SetAlpha(1.0)
                button.cooldown:SetDrawBling(self.PulseEnabled)
             else
@@ -288,7 +289,7 @@ function HotbarMixin:UpdateVisibility(isshown, expanded)
                button.cooldown:SetDrawBling(false)
             end
          else
-            if button:GetID() >= 9 then 
+            if button.chbIndex >= 9 then 
                button:SetAlpha(self.ExpandedAlpha1)
                button.cooldown:SetDrawBling(self.ExpandedAlpha1 ~= 0)
             else
@@ -323,7 +324,7 @@ function HotbarMixin:AddVisibilityHandler()
       if newstate then
          for i = 1, 12 do
             local button = self:GetFrameRef('ActionButton'..i)
-            if button:GetID() >= 9 then
+            if button.chbIndex >= 9 then
                if exphide then
                  button:Enable()
                else
@@ -397,7 +398,7 @@ function HotbarMixin:AddExpandHandler()
          self:CallMethod("UpdateVisibility", visibility, 1)
          for i = 1, 12 do
             local button = self:GetFrameRef('ActionButton'..i)
-            if button:GetID() >= 9 then
+            if button.chbIndex >= 9 then
                button:Enable()
             else
                button:Disable()

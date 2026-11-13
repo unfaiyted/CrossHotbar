@@ -337,6 +337,8 @@ function CrossHotbarMixin:AddPageHandler()
       end
 
       self:CallMethod("UpdatePageStatus")
+      -- (Forever: the bars on the game's crossbar slots follow the set, Forever/NativeSlots.lua)
+      if self:GetAttribute("apply-native") then self:RunAttribute("apply-native", newstate) end
   ]])
 end
 
@@ -464,8 +466,8 @@ function CrossHotbarMixin:HideActionBars(hide)
       local gamepadnames = {
          "GamepadMainActionBarFrame",
          "GamepadMainActionBarFramePageUnit",
-         "GamepadPersistentInputLegend",
-         "GamepadActionBarEditFrame"
+         "GamepadPersistentInputLegend"
+         -- (GamepadActionBarEditFrame left alone: it's the game's bind mode, Forever/NativeSlots.lua)
       }
       
       for _,barname in ipairs(gamepadnames) do
