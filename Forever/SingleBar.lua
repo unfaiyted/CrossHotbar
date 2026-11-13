@@ -154,7 +154,26 @@ function addon:ForeverLayout()
    if status then
       status:ClearAllPoints()
       if single then
-         status:SetPoint("CENTER", addon.Crosshotbar, "CENTER", 0, 0)
+         -- (centred, just under the bar's lowest button 1-8)
+         local root = addon.Crosshotbar
+         local _, rootY = root:GetCenter()
+         local lowest
+         for _, name in ipairs({ L_BARS[1], R_BARS[1] }) do
+            local bar = _G[name]
+            for i = 1, 8 do
+               local b = bar and bar.Buttons and bar.Buttons[i]
+               local bottom = b and b:GetBottom()
+               if bottom then
+                  bottom = bottom * b:GetEffectiveScale()
+                  lowest = lowest and math.min(lowest, bottom) or bottom
+               end
+            end
+         end
+         local dy = 0
+         if lowest and rootY then
+            dy = (lowest - rootY * root:GetEffectiveScale()) / status:GetEffectiveScale() - 6
+         end
+         status:SetPoint("TOP", root, "CENTER", 0, dy)
       else
          status:SetPoint("TOP", addon.Crosshotbar, "BOTTOM", 0, 0)
       end
