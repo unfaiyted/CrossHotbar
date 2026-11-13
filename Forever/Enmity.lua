@@ -20,7 +20,8 @@
 local ADDON, addon = ...
 
 local MAX_ROWS = 8
-local ROW_W = 200
+local ROW_W = 140          -- (the default; resizable when unlocked: 100-320)
+local MIN_W, MAX_W = 100, 320
 local CAST_H = 2
 local ROW_H = 26          -- (name line, thin trimmed bar, tiny cast bar)
 local BAR_H = 4
@@ -79,6 +80,16 @@ end
 ---------------------------------------------------------------------------
 local frame = CreateFrame("Frame", "CHBEnmityFrame", UIParent, "BackdropTemplate")
 frame:SetSize(ROW_W, MAX_ROWS * (ROW_H + 3))
+frame:SetResizable(true)
+if frame.SetResizeBounds then frame:SetResizeBounds(MIN_W, ROW_H, MAX_W, MAX_ROWS * (ROW_H + 3)) end
+-- (unlocked: a grip at the bottom right sets the width)
+local grip = CreateFrame("Button", nil, frame)
+grip:SetSize(14, 14)
+grip:SetPoint("BOTTOMRIGHT", 2, -2)
+grip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+grip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
+grip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
+grip:Hide()
 frame:SetPoint("RIGHT", UIParent, "RIGHT", -260, 80)
 frame:SetMovable(true)
 frame:SetClampedToScreen(true)
@@ -133,8 +144,9 @@ end
 local rows = {}
 for i = 1, MAX_ROWS do
    local r = CreateFrame("Frame", nil, frame)
-   r:SetSize(ROW_W, ROW_H)
+   r:SetHeight(ROW_H)
    r:SetPoint("TOPLEFT", 0, -(i - 1) * (ROW_H + 3))
+   r:SetPoint("TOPRIGHT", 0, -(i - 1) * (ROW_H + 3))
    -- (the aggro marker: a coloured diamond in a brass setting, a dark ring between)
    r.markerGold = r:CreateTexture(nil, "ARTWORK", nil, 1)
    r.markerGold:SetSize(11, 11)
@@ -273,6 +285,7 @@ local function Draw()
    frame:EnableMouse(unlocked and true or false)
    if frame.SetBackdropColor then frame:SetBackdropColor(0, 0, 0, unlocked and 0.35 or 0) end
    title:SetShown(unlocked and true or false)
+   grip:SetShown(unlocked and true or false)
    for i, r in ipairs(rows) do
       local e = list[i]
       if e then
@@ -306,6 +319,20 @@ frame:SetScript("OnDragStop", function(self)
    end
 end)
 
+grip:SetScript("OnMouseDown", function()
+   local s = Settings()
+   if s and not s.enmityLocked then frame:StartSizing("BOTTOMRIGHT") end
+end)
+grip:SetScript("OnMouseUp", function()
+   frame:StopMovingOrSizing()
+   local s = Settings()
+   if s then
+      s.enmityWidth = math.floor(frame:GetWidth() + 0.5)
+      local point, _, rel, x, y = frame:GetPoint(1)
+      s.enmityPos = { point, rel, x, y }
+   end
+end)
+
 local ticker = CreateFrame("Frame")
 local since = 0
 ticker:SetScript("OnUpdate", function(_, elapsed)
@@ -330,6 +357,9 @@ function E.Apply()
    if s.enmityPos then
       frame:ClearAllPoints()
       frame:SetPoint(s.enmityPos[1], UIParent, s.enmityPos[2], s.enmityPos[3], s.enmityPos[4])
+   end
+   if s.enmityWidth then
+      frame:SetWidth(math.max(MIN_W, math.min(MAX_W, s.enmityWidth)))
    end
    if InCombatLockdown() then return end
    if s.enmity and C_CVar and C_CVar.SetCVar and C_CVar.GetCVar("nameplateShowEnemies") ~= "1" then
