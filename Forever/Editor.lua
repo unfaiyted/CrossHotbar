@@ -272,7 +272,11 @@ local function Place(entry, set, row, index)
    if not (entry and slot) then return end
    ClearCursor()
    local ok, err = pcall(Pickup, entry)
-   if ok and GetCursorInfo() then ok, err = pcall(PlaceAction, slot) end
+   if ok and not GetCursorInfo() then
+      ok, err = false, "nothing to pick up"
+   elseif ok then
+      ok, err = pcall(PlaceAction, slot)
+   end
    local displaced = ok and CursorEntry() or nil
    ClearCursor()
    Log(("place %s %s -> set %d %s #%d (action %d)%s"):format(entry.kind, tostring(entry.id), set,

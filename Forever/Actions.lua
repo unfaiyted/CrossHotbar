@@ -46,19 +46,34 @@ function A.CommandEntries()
    return out
 end
 
--- The macro for a command, made or brought up to date (out of combat); its index
+-- The macro for a command, made or brought up to date (out of combat); its index.
+-- CreateMacro takes the icon's name (no path); a refused icon falls back to
+-- the question mark. Errors go to the debug log.
+local function IconName(icon)
+   return (tostring(icon or ""):gsub("^[Ii]nterface\\[Ii]cons\\", ""))
+end
+
 function A.Macro(entry)
-   if InCombatLockdown() or not (CreateMacro and GetMacroIndexByName) then return nil end
+   local log = addon.ForeverLog and function(m) addon:ForeverLog("actions: " .. m) end or function() end
+   if InCombatLockdown() or not (CreateMacro and GetMacroIndexByName) then log("no macro API / in combat") return nil end
    local name = ("x:" .. entry.name):sub(1, 16)
+   local icon = IconName(entry.icon)
    local index = GetMacroIndexByName(name)
    if index and index > 0 then
-      local _, icon, body = GetMacroInfo(index)
-      if body ~= entry.body then EditMacro(index, name, entry.icon, entry.body) end
+      local _, _, body = GetMacroInfo(index)
+      if body ~= entry.body then pcall(EditMacro, index, name, icon, entry.body) end
       return index
    end
-   local ok, made = pcall(CreateMacro, name, entry.icon, entry.body, false)
-   if ok and made then return made end
-   print("|cff66ccffCrossHotbar|r: no room for another general macro (" .. name .. ").")
+   for _, try in ipairs({ icon, "INV_MISC_QUESTIONMARK", 134400 }) do
+      local ok, made = pcall(CreateMacro, name, try, entry.body, false)
+      if ok and made and made > 0 then
+         log("made " .. name .. " (" .. tostring(made) .. ", icon " .. tostring(try) .. ")")
+         return made
+      end
+      log("CreateMacro " .. name .. " icon " .. tostring(try) .. ": " .. tostring(made))
+   end
+   local account = GetNumMacros and GetNumMacros() or "?"
+   print("|cff66ccffCrossHotbar|r: couldn't make the macro " .. name .. " (general macros in use: " .. tostring(account) .. ").")
    return nil
 end
 
