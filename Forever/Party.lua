@@ -319,6 +319,23 @@ local function GameFrames(hide)
    Fade(_G.PartyFrame, hide)
    Fade(_G.CompactPartyFrame, hide)
    for i = 1, 4 do Fade(_G["PartyMemberFrame" .. i], hide) end
+   -- (each member frame's highlights: the target border is a texture that
+   -- can ignore its parent's alpha, so it's faded itself; and any region of
+   -- theirs that ignores its parent's alpha)
+   for i = 1, 5 do
+      for _, name in ipairs({ "CompactPartyFrameMember" .. i, "PartyMemberFrame" .. i }) do
+         local member = _G[name]
+         if member then
+            Fade(member, hide)
+            Fade(member.selectionHighlight, hide)
+            Fade(member.aggroHighlight, hide)
+            for _, region in ipairs({ member:GetRegions() }) do
+               local ok, ignores = pcall(region.IsIgnoringParentAlpha, region)
+               if ok and ignores == true then Fade(region, hide) end
+            end
+         end
+      end
+   end
    for _, parent in ipairs({ _G.CompactPartyFrame, _G.PartyFrame }) do
       if parent and parent.GetChildren then
          for _, child in ipairs({ parent:GetChildren() }) do
