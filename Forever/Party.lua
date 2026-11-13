@@ -319,6 +319,8 @@ local function GameFrames(hide)
    Fade(_G.PartyFrame, hide)
    Fade(_G.CompactPartyFrame, hide)
    for i = 1, 4 do Fade(_G["PartyMemberFrame" .. i], hide) end
+   -- (the raid frame manager: the pull-out tab on the screen's left edge)
+   Fade(_G.CompactRaidFrameManager, hide)
    -- (each member frame's highlights: the target border is a texture that
    -- can ignore its parent's alpha, so it's faded itself; and any region of
    -- theirs that ignores its parent's alpha)
