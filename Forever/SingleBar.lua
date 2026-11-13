@@ -48,20 +48,15 @@ watch:SetScript("OnUpdate", function(_, elapsed)
    local wantL, wantR = 1, 1
    if s.singleBar then
       local trigger = tonumber(pad:GetAttribute("triggerstate")) or 4
-      local expanded = tonumber(pad:GetAttribute("state-expanded")) or 0
-      -- (CrossHotbar's trigger states: 4 none, 6 / 2 L2, 7 / 1 R2, 3 L2>R2, 5 R2>L2;
-      -- expanded: 1 L2's, 2 R2's)
-      -- (the trigger held first; the expanded state stays latched after a
-      -- double tap, so it only counts when no trigger is held)
+      -- (CrossHotbar's trigger states: 4 none, 6 / 2 L2, 7 / 1 R2, 3 L2>R2, 5 R2>L2)
+      -- (only a trigger held picks the side: CrossHotbar's expanded state
+      -- stays latched after a double tap, so it isn't read; let go, the side
+      -- used last stays, faded)
       if trigger == 3 or trigger == 5 then
          wantL, wantR = 0, 0
       elseif trigger == 6 or trigger == 2 then
          last, wantL, wantR = "L", 1, 0
       elseif trigger == 7 or trigger == 1 then
-         last, wantL, wantR = "R", 0, 1
-      elseif expanded == 1 then
-         last, wantL, wantR = "L", 1, 0
-      elseif expanded == 2 then
          last, wantL, wantR = "R", 0, 1
       elseif last == "L" then
          wantL, wantR = s.idleAlpha, 0
