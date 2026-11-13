@@ -114,15 +114,26 @@ end
 
 local RED, ORANGE, GREEN = { 1, 0.2, 0.15 }, { 1, 0.6, 0.1 }, { 0.3, 0.85, 0.35 }
 
--- The marker's colour: the game's threat colour of your status (secret is
--- fine: it goes straight to the texture); else on you / on the party
+-- The marker's colour, from the game's threat status of you on that enemy
+-- (the same source ForeverThreat reads): 3 you have it, solidly; 2 you're
+-- tanking but someone's ahead (about to lose it); 1 you're ahead of the
+-- tank (about to pull it); 0 low, someone else has it. Readable: our
+-- colours. Secret (Forever hides it at times): the game's own threat colour,
+-- the secret passed straight to the texture. Neither: what can be told
+-- plainly, on you (red) or on the party (green).
+local STATUS_COLOUR = { [3] = RED, [2] = ORANGE, [1] = ORANGE, [0] = GREEN }
+
 local function Colour(r, e)
-   if type(e.status) == "number" and GetThreatStatusColor then
-      local ok, cr, cg, cb = pcall(GetThreatStatusColor, e.status)
-      if ok and type(cr) == "number" then
-         -- (status 0, low threat: the game's grey; when it can be read, ours green)
-         if not Secret(e.status) and e.status == 0 then cr, cg, cb = GREEN[1], GREEN[2], GREEN[3] end
-         if pcall(r.marker.SetVertexColor, r.marker, cr, cg, cb, 1) then return end
+   local status = e.status
+   if type(status) == "number" then
+      if not Secret(status) then
+         local c = STATUS_COLOUR[status] or GREEN
+         r.marker:SetVertexColor(c[1], c[2], c[3], 1)
+         return
+      end
+      if GetThreatStatusColor then
+         local ok, cr, cg, cb = pcall(GetThreatStatusColor, status)
+         if ok and type(cr) == "number" and pcall(r.marker.SetVertexColor, r.marker, cr, cg, cb, 1) then return end
       end
    end
    local c = (e.on == "me") and RED or (e.on == "party") and GREEN or ORANGE
