@@ -16,4 +16,4 @@ GamePad/GamePad.xml
 ConfigUI/ConfigUI.xml
 
 Forever\ForeverFocus.lua
-Forever\NativeSlots.lua
+Forever\Editor.lua

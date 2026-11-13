@@ -74,6 +74,7 @@ end
 -- The game's focus: true while only its core bindings are active (the world)
 -- and its bind mode isn't open
 local function InWorld()
+   if addon.Editor and addon.Editor.IsOpen() then return false, "crossbar editor" end
    local binding, why = BindModeOpen()
    if binding then return false, "bind mode (" .. why .. ")" end
    local manager = _G.GamepadSharedUtility and GamepadSharedUtility.InputBindingManager
