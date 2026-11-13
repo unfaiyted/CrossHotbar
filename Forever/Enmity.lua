@@ -18,8 +18,12 @@
 local ADDON, addon = ...
 
 local MAX_ROWS = 8
-local ROW_W = 170
-local ROW_H = 22          -- (name line + thin trimmed bar)
+local ROW_W = 200
+local NAME_W = 80         -- (names cut to one width, so the icons line up)
+local ICON = 11
+local MAX_AURAS = 7
+local CAST_H = 2
+local ROW_H = 26          -- (name line + auras, thin trimmed bar, tiny cast bar)
 local BAR_H = 4
 local GOLD = { 1, 0.82, 0.25 }          -- (the default UI's gold trim)
 
@@ -154,15 +158,15 @@ for i = 1, MAX_ROWS do
    -- (the name, above the bar)
    r.name = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
    r.name:SetPoint("TOPLEFT", 16, 0)
-   r.name:SetPoint("RIGHT", 0, 0)
+   r.name:SetWidth(NAME_W)
    r.name:SetJustifyH("LEFT")
    r.name:SetWordWrap(false)
    r.name:SetShadowOffset(1, -1)
    r.name:SetShadowColor(0, 0, 0, 1)
    -- (the thin health bar, in its trim)
    local box = CreateFrame("Frame", nil, r)
-   box:SetPoint("BOTTOMLEFT", 15, 0)
-   box:SetPoint("BOTTOMRIGHT", 0, 0)
+   box:SetPoint("BOTTOMLEFT", 15, CAST_H + 2)
+   box:SetPoint("BOTTOMRIGHT", 0, CAST_H + 2)
    box:SetHeight(BAR_H + 6)
    local inset = Bevel(box)
    r.bar = CreateFrame("StatusBar", nil, box)
@@ -171,6 +175,42 @@ for i = 1, MAX_ROWS do
    r.bar:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
    r.bar:SetStatusBarColor(0.75, 0.16, 0.12, 1)
    local bg = r.bar:CreateTexture(nil, "BACKGROUND"); bg:SetAllPoints(); bg:SetColorTexture(0.137, 0.11, 0.075, 1)
+   -- (auras, right of the name: tiny icons, each on a 1px coloured border)
+   r.auras = {}
+   for k = 1, MAX_AURAS do
+      local a = CreateFrame("Frame", nil, r)
+      a:SetSize(ICON, ICON)
+      a:SetPoint("TOPLEFT", r.name, "TOPRIGHT", 3 + (k - 1) * (ICON + 2), 1)
+      a.border = a:CreateTexture(nil, "BACKGROUND"); a.border:SetAllPoints()
+      a.icon = a:CreateTexture(nil, "ARTWORK"); a.icon:SetPoint("TOPLEFT", 1, -1); a.icon:SetPoint("BOTTOMRIGHT", -1, 1)
+      a.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+      a:Hide()
+      r.auras[k] = a
+   end
+   -- (the tiny cast bar, under the health bar; a soft glow pulses round it
+   -- while the cast can be interrupted)
+   r.castGate = CreateFrame("Frame", nil, r)
+   r.castGate:SetPoint("BOTTOMLEFT", 15, -1)
+   r.castGate:SetPoint("BOTTOMRIGHT", 1, -1)
+   r.castGate:SetHeight(CAST_H + 4)
+   local glow = r.castGate:CreateTexture(nil, "BACKGROUND")
+   glow:SetAllPoints()
+   glow:SetColorTexture(1, 0.85, 0.3, 0.9)
+   local pulse = glow:CreateAnimationGroup()
+   pulse:SetLooping("BOUNCE")
+   local fade = pulse:CreateAnimation("Alpha")
+   fade:SetFromAlpha(0.15); fade:SetToAlpha(1); fade:SetDuration(0.35)
+   pulse:Play()
+   r.castGate:Hide()
+   r.cast = CreateFrame("StatusBar", nil, r)
+   r.cast:SetPoint("BOTTOMLEFT", 16, 0)
+   r.cast:SetPoint("BOTTOMRIGHT", 0, 0)
+   r.cast:SetHeight(CAST_H)
+   r.cast:SetFrameLevel(r.castGate:GetFrameLevel() + 2)
+   r.cast:SetStatusBarTexture("Interface\\Buttons\\WHITE8x8")
+   r.cast:SetStatusBarColor(1, 0.7, 0.1, 1)
+   local cbg = r.cast:CreateTexture(nil, "BACKGROUND"); cbg:SetAllPoints(); cbg:SetColorTexture(0.05, 0.04, 0.02, 1)
+   r.cast:Hide()
    rows[i] = r
 end
 
@@ -202,6 +242,80 @@ local function Colour(r, e)
    r.marker:SetVertexColor(c[1], c[2], c[3], 1)
 end
 
+---------------------------------------------------------------------------
+-- Auras and casts (secret values go straight into textures / bars)
+---------------------------------------------------------------------------
+local BORDER_MINE, BORDER_DEBUFF, BORDER_BUFF = { 0.54, 0.46, 0.32 }, { 0.6, 0.12, 0.1 }, { 0.2, 0.55, 0.2 }
+
+local function AuraAt(unit, index, filter)
+   if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
+      local ok, aura = pcall(C_UnitAuras.GetAuraDataByIndex, unit, index, filter)
+      return ok and aura or nil
+   elseif UnitAura then
+      local name, icon = UnitAura(unit, index, filter)
+      return name and { icon = icon } or nil
+   end
+end
+
+-- Your debuffs first, then the others' (when who cast them can be read),
+-- then the enemy's buffs
+local function Auras(r, unit)
+   local n = 0
+   local function add(aura, border)
+      if n >= MAX_AURAS then return end
+      n = n + 1
+      local a = r.auras[n]
+      a.icon:SetTexture(aura.icon)
+      a.border:SetColorTexture(border[1], border[2], border[3], 1)
+      a:Show()
+   end
+   for k = 1, 20 do
+      local aura = AuraAt(unit, k, "HARMFUL|PLAYER")
+      if not aura then break end
+      add(aura, BORDER_MINE)
+   end
+   for k = 1, 40 do
+      local aura = AuraAt(unit, k, "HARMFUL")
+      if not aura or n >= MAX_AURAS then break end
+      local mine = aura.isFromPlayerOrPlayerPet
+      if not Secret(mine) and not mine then add(aura, BORDER_DEBUFF) end
+   end
+   for k = 1, 20 do
+      local aura = AuraAt(unit, k, "HELPFUL")
+      if not aura or n >= MAX_AURAS then break end
+      add(aura, BORDER_BUFF)
+   end
+   for k = n + 1, MAX_AURAS do r.auras[k]:Hide() end
+end
+
+-- The cast (or channel): its times into the bar (secret is fine); the glow
+-- shown while it can be interrupted (a secret answer gates it too, through
+-- SetAlphaFromBoolean)
+local function Cast(r, unit)
+   local name, _, _, startMS, endMS, _, _, notInterruptible = UnitCastingInfo(unit)
+   if type(name) == "nil" and UnitChannelInfo then
+      name, _, _, startMS, endMS, _, notInterruptible = UnitChannelInfo(unit)
+   end
+   if type(name) == "nil" or type(startMS) == "nil" then
+      r.casting = nil
+      r.cast:Hide(); r.castGate:Hide()
+      return
+   end
+   r.casting = true
+   r.cast:SetMinMaxValues(startMS, endMS)
+   r.cast:SetValue(GetTime() * 1000)
+   r.cast:Show()
+   r.castGate:Show()
+   if Secret(notInterruptible) and r.castGate.SetAlphaFromBoolean then
+      r.castGate:SetAlphaFromBoolean(notInterruptible, 0, 1)
+      r.cast:SetStatusBarColor(1, 0.7, 0.1, 1)
+   else
+      local shielded = notInterruptible and true or false
+      r.castGate:SetAlpha(shielded and 0 or 1)
+      if shielded then r.cast:SetStatusBarColor(0.6, 0.6, 0.6, 1) else r.cast:SetStatusBarColor(1, 0.7, 0.1, 1) end
+   end
+end
+
 local function Draw()
    local s = Settings()
    local unlocked = s and not s.enmityLocked
@@ -220,6 +334,10 @@ local function Draw()
          r.bar:SetMinMaxValues(0, UnitHealthMax(e.unit) or 1)
          r.bar:SetValue(UnitHealth(e.unit) or 0)
          Colour(r, e)
+         r.unit = e.unit
+         local okA = pcall(Auras, r, e.unit)
+         if not okA then for k = 1, MAX_AURAS do r.auras[k]:Hide() end end
+         if not pcall(Cast, r, e.unit) then r.casting = nil; r.cast:Hide(); r.castGate:Hide() end
          r:Show()
       else
          r:Hide()
@@ -244,6 +362,9 @@ end)
 local ticker = CreateFrame("Frame")
 local since = 0
 ticker:SetScript("OnUpdate", function(_, elapsed)
+   for _, r in ipairs(rows) do
+      if r.casting and r:IsShown() then r.cast:SetValue(GetTime() * 1000) end
+   end
    since = since + elapsed
    if since < 0.2 then return end
    since = 0
