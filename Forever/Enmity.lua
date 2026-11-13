@@ -22,7 +22,7 @@ local ADDON, addon = ...
 local MAX_ROWS = 8
 local ROW_W = 200
 local CAST_H = 2
-local ROW_H = 26          -- (name line + auras, thin trimmed bar, tiny cast bar)
+local ROW_H = 26          -- (name line, thin trimmed bar, tiny cast bar)
 local BAR_H = 4
 local GOLD = { 1, 0.82, 0.25 }          -- (the default UI's gold trim)
 
