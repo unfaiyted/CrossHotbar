@@ -2,10 +2,12 @@
 -- list, and D-pad left / right (no trigger held) to target the previous /
 -- next one in it. D-pad up / down stay CrossHotbar's party navigation.
 --
--- The list (insecure, every 0.2 s): enemy nameplates (nameplate1..40) that
--- are alive, attackable, in combat, and on your threat list or targeting
--- you; most threat first (attacking you, then by threat %). Each row: a
--- threat colour, name, health; the current target marked.
+-- The list (insecure, every 0.2 s): enemies from the nameplates
+-- (nameplate1..40) and the units the game names (target, focus, soft target,
+-- mouseover, the party's targets), alive, attackable, and targeting you or
+-- on your threat list; most threat first. Each row: a threat colour, name,
+-- health; the current target marked. In a fight, a diagnostic line to the
+-- debug log every 3 s.
 --
 -- Targeting (secure): two buttons, Next and Prev, bound to the D-pad by
 -- CrossHotbar ("CLICK CHBEnmityNext:LeftButton"...). Their snippet reads the
@@ -40,24 +42,43 @@ data:SetAttribute("count", 0)
 
 local units, list = {}, {}
 
-local function Engaged(unit)
-   if not (UnitExists(unit) and UnitCanAttack("player", unit)) or UnitIsDead(unit) then return nil end
-   if not UnitAffectingCombat(unit) then return nil end
+-- (why each candidate was kept or not: for the diagnostics)
+local function Check(unit)
+   if not UnitExists(unit) then return nil, "none" end
+   if not UnitCanAttack("player", unit) then return nil, "friendly" end
+   if UnitIsDead(unit) then return nil, "dead" end
    local targetsMe = UnitIsUnit(unit .. "target", "player")
-   local tanking, status, pct = nil, nil, 0
+   local tanking, status, pct
    if UnitDetailedThreatSituation then
       tanking, status, pct = UnitDetailedThreatSituation("player", unit)
    end
-   if not (targetsMe or status) then return nil end
-   return { unit = unit, targetsMe = targetsMe, tanking = tanking, status = status or 0, pct = pct or 0 }
+   if not status and UnitThreatSituation then status = UnitThreatSituation("player", unit) end
+   if not (targetsMe or status) then
+      return nil, "not engaged (combat=" .. tostring(UnitAffectingCombat(unit)) .. ")"
+   end
+   return { unit = unit, targetsMe = targetsMe, tanking = tanking, status = status or 0, pct = pct or 0 }, "kept"
 end
 
+-- Where enemies can come from: nameplates, then the units the game names
+-- (target, focus, soft target, mouseover, the party's targets)
+local OTHER = { "target", "focus", "softenemy", "mouseover", "targettarget",
+                "party1target", "party2target", "party3target", "party4target" }
+
+local diagAt = 0
 local function Scan()
    wipe(list)
-   for i = 1, 40 do
-      local e = Engaged("nameplate" .. i)
+   local seen, plates, why = {}, 0, {}
+   local function consider(unit)
+      local guid = UnitGUID(unit)
+      if not guid or seen[guid] then return end
+      seen[guid] = true
+      if unit:find("^nameplate") then plates = plates + 1 end
+      local e, reason = Check(unit)
       if e then list[#list + 1] = e end
+      if #why < 4 then why[#why + 1] = unit .. "=" .. (UnitName(unit) or "?") .. ":" .. reason end
    end
+   for i = 1, 40 do consider("nameplate" .. i) end
+   for _, unit in ipairs(OTHER) do consider(unit) end
    table.sort(list, function(a, b)
       if (a.targetsMe or a.tanking) ~= (b.targetsMe or b.tanking) then return (a.targetsMe or a.tanking) and true or false end
       if a.status ~= b.status then return a.status > b.status end
@@ -65,6 +86,13 @@ local function Scan()
    end)
    data:SetAttribute("count", #list)
    for i = 1, 40 do data:SetAttribute("u" .. i, list[i] and list[i].unit or nil) end
+   -- (diagnostics: in a fight, every 3 s, to the debug log)
+   if UnitAffectingCombat("player") and GetTime() - diagAt > 3 and addon.ForeverLog then
+      diagAt = GetTime()
+      local platesAPI = C_NamePlate and C_NamePlate.GetNamePlates and #C_NamePlate.GetNamePlates() or -1
+      addon:ForeverLog(("enmity scan: plates %d (C_NamePlate %d), listed %d, cvar %s | %s"):format(plates, platesAPI, #list,
+         tostring(C_CVar and C_CVar.GetCVar and C_CVar.GetCVar("nameplateShowEnemies")), table.concat(why, "; ")))
+   end
 end
 
 ---------------------------------------------------------------------------
