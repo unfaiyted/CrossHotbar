@@ -22,6 +22,7 @@ function addon:ForeverSettings()
    local s = CrossHotbar_DB.Forever
    if s.singleBar == nil then s.singleBar = true end
    if s.idleAlpha == nil then s.idleAlpha = 0.35 end
+   if s.barLabel == nil then s.barLabel = true end
    return s
 end
 
@@ -39,6 +40,20 @@ local function Step(from, to, elapsed)
    if from < to then return math.min(to, from + SPEED * elapsed) end
    return math.max(to, from - SPEED * elapsed)
 end
+
+-- The active bar's name above it: L2, R2, L2 > R2, R2 > L2 (+ Expanded);
+-- held: full; let go: the side used last, at the idle fade (single-bar), or
+-- hidden (both bars shown). Placed by ForeverLayout, out of combat.
+local labelFrame = CreateFrame("Frame", "CrossHotbarBarLabel", UIParent)
+labelFrame:SetSize(160, 20)
+labelFrame:SetFrameStrata("MEDIUM")
+labelFrame:EnableMouse(false)
+local label = labelFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+label:SetPoint("BOTTOM")
+label:SetShadowOffset(1, -1)
+label:SetShadowColor(0, 0, 0, 1)
+local labelAlpha = 0
+local NAMES = { L = "L2", R = "R2", LR = "L2 > R2", RL = "R2 > L2" }
 
 local watch = CreateFrame("Frame")
 watch:SetScript("OnUpdate", function(_, elapsed)
@@ -64,6 +79,26 @@ watch:SetScript("OnUpdate", function(_, elapsed)
          wantL, wantR = 0, s.idleAlpha
       end
    end
+   -- (the label)
+   if s.barLabel then
+      local trigger = tonumber(pad:GetAttribute("triggerstate")) or 4
+      local expanded = tonumber(pad:GetAttribute("state-expanded")) or 0
+      local side, held
+      if trigger == 3 then side, held = "LR", true
+      elseif trigger == 5 then side, held = "RL", true
+      elseif trigger == 6 or trigger == 2 then side, held = "L", true
+      elseif trigger == 7 or trigger == 1 then side, held = "R", true
+      else side, held = last, false end
+      local text = NAMES[side] or ""
+      if held and ((side == "L" and expanded == 1) or (side == "R" and expanded == 2)) then text = text .. "  Expanded" end
+      if label:GetText() ~= text then label:SetText(text) end
+      local want = held and 1 or (s.singleBar and s.idleAlpha or 0)
+      labelAlpha = Step(labelAlpha, want, elapsed)
+      labelFrame:SetAlpha(labelAlpha)
+      labelFrame:Show()
+   else
+      labelFrame:Hide()
+   end
    local l, r = Step(current.L, wantL, elapsed), Step(current.R, wantR, elapsed)
    if l ~= current.L then current.L = l; Apply(L_BARS, l) end
    if r ~= current.R then current.R = r; Apply(R_BARS, r) end
@@ -85,6 +120,10 @@ function addon:ForeverBarCommand(args)
       return true
    elseif word == "enmity" then
       if addon.EnmityCommand then addon:EnmityCommand(value) end
+      return true
+   elseif word == "label" then
+      s.barLabel = not s.barLabel
+      print("|cff66ccffCrossHotbar|r: bar label " .. (s.barLabel and "on" or "off") .. ".")
       return true
    elseif word == "fade" then
       local n = tonumber(value)
@@ -146,6 +185,28 @@ local function Place(names, single)
    end
 end
 
+-- The label just above the bars' highest button 1-8 (both sides share a spot
+-- in single-bar mode; with both shown, above their middle)
+local function PlaceLabel(root)
+   local _, rootY = root:GetCenter()
+   local highest
+   for _, name in ipairs({ L_BARS[1], R_BARS[1] }) do
+      local bar = _G[name]
+      for i = 1, 8 do
+         local b = bar and bar.Buttons and bar.Buttons[i]
+         local top = b and b:GetTop()
+         if top then
+            top = top * b:GetEffectiveScale()
+            highest = highest and math.max(highest, top) or top
+         end
+      end
+   end
+   labelFrame:ClearAllPoints()
+   local dy = 0
+   if highest and rootY then dy = (highest - rootY * root:GetEffectiveScale()) / labelFrame:GetEffectiveScale() + 4 end
+   labelFrame:SetPoint("BOTTOM", root, "CENTER", 0, dy)
+end
+
 function addon:ForeverLayout()
    if InCombatLockdown() then pending = true return end
    pending = false
@@ -157,6 +218,7 @@ function addon:ForeverLayout()
    if single then Place(L_BARS, true); Place(R_BARS, true) end
    local line = _G.WXHBCrossHotbarMover_Texture
    if line then line:SetShown(not single) end
+   PlaceLabel(addon.Crosshotbar)
    local status = addon.Crosshotbar.PageStatusFrame
    if status then
       status:ClearAllPoints()
