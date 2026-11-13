@@ -312,11 +312,23 @@ local function Fade(region, hide)
    elseif not hide and group:IsPlaying() then group:Stop() end
 end
 
+-- (the containers, and each child too: Forever's gamepad selection marker
+-- is a child of CompactPartyFrame drawn above it, made the first time a member
+-- is selected; re-run every second so ones made later are caught)
 local function GameFrames(hide)
    Fade(_G.PartyFrame, hide)
    Fade(_G.CompactPartyFrame, hide)
    for i = 1, 4 do Fade(_G["PartyMemberFrame" .. i], hide) end
+   for _, parent in ipairs({ _G.CompactPartyFrame, _G.PartyFrame }) do
+      if parent and parent.GetChildren then
+         for _, child in ipairs({ parent:GetChildren() }) do
+            Fade(child, hide)
+            if child.promptContainerFrame then Fade(child.promptContainerFrame, hide) end
+         end
+      end
+   end
 end
+local gameHidden = false
 
 ---------------------------------------------------------------------------
 -- Showing, placing, updating
@@ -331,7 +343,8 @@ local function Apply()
    local inGroup = IsInGroup and IsInGroup() and not (IsInRaid and IsInRaid())
    local show = s.party and (inGroup or not s.partyLocked)
    if not InCombatLockdown() then holder:SetShown(show and true or false) end
-   GameFrames(s.party and inGroup)
+   gameHidden = (s.party and inGroup) and true or false
+   GameFrames(gameHidden)
    local unlocked = not s.partyLocked
    holder:EnableMouse(unlocked)
    if holder.SetBackdropColor then holder:SetBackdropColor(0, 0, 0, unlocked and 0.35 or 0) end
@@ -365,8 +378,13 @@ events:RegisterEvent("GROUP_ROSTER_UPDATE")
 events:RegisterEvent("PLAYER_REGEN_ENABLED")
 events:SetScript("OnEvent", function() C_Timer.After(0.3, Apply) end)
 
-local since = 0
+local since, sweep = 0, 0
 holder:SetScript("OnUpdate", function(_, elapsed)
+   sweep = sweep + elapsed
+   if sweep > 1 then
+      sweep = 0
+      if gameHidden then pcall(GameFrames, true) end
+   end
    since = since + elapsed
    if since < 0.15 then return end
    since = 0
