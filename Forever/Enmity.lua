@@ -19,7 +19,7 @@ local ADDON, addon = ...
 
 local MAX_ROWS = 8
 local ROW_W = 170
-local ROW_H = 20          -- (name line + thin trimmed bar)
+local ROW_H = 22          -- (name line + thin trimmed bar)
 local BAR_H = 4
 local GOLD = { 1, 0.82, 0.25 }          -- (the default UI's gold trim)
 
@@ -88,10 +88,13 @@ title:SetText("Enmity  |cff999999(drag to move; /xhb enmity lock)|r")
 -- Trim, as the default UI's (muted brass, not bright gold), drawn in 1px
 -- layers outer to inner: a dark outline, then brass a touch lighter on the
 -- top / left edges than on the bottom / right.
-local BRASS_LIGHT, BRASS_DARK = { 0.70, 0.56, 0.27, 1 }, { 0.38, 0.28, 0.11, 1 }
+-- (sampled from the default UI's bar trim: near-black outline, a tan-bronze
+-- edge, a dark brown body)
+local BRASS_LIGHT, BRASS_DARK = { 0.54, 0.46, 0.32, 1 }, { 0.27, 0.21, 0.13, 1 }
 local BEVEL = {
-   { light = { 0.02, 0.015, 0.0, 0.95 }, dark = { 0.02, 0.015, 0.0, 0.95 } },
+   { light = { 0.02, 0.016, 0.012, 1 }, dark = { 0.02, 0.016, 0.012, 1 } },
    { light = BRASS_LIGHT, dark = BRASS_DARK },
+   { light = { 0.14, 0.11, 0.07, 1 }, dark = { 0.07, 0.05, 0.03, 1 } },
 }
 
 local function Edge(parent, layer, colour)
@@ -150,14 +153,14 @@ for i = 1, MAX_ROWS do
    local box = CreateFrame("Frame", nil, r)
    box:SetPoint("BOTTOMLEFT", 15, 0)
    box:SetPoint("BOTTOMRIGHT", 0, 0)
-   box:SetHeight(BAR_H + 4)
+   box:SetHeight(BAR_H + 6)
    local inset = Bevel(box)
    r.bar = CreateFrame("StatusBar", nil, box)
    r.bar:SetPoint("TOPLEFT", inset, -inset)
    r.bar:SetPoint("BOTTOMRIGHT", -inset, inset)
    r.bar:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
    r.bar:SetStatusBarColor(0.75, 0.16, 0.12, 1)
-   local bg = r.bar:CreateTexture(nil, "BACKGROUND"); bg:SetAllPoints(); bg:SetColorTexture(0.04, 0.03, 0.02, 0.85)
+   local bg = r.bar:CreateTexture(nil, "BACKGROUND"); bg:SetAllPoints(); bg:SetColorTexture(0.137, 0.11, 0.075, 1)
    rows[i] = r
 end
 
