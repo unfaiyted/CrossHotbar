@@ -75,6 +75,13 @@ end
 -- and its bind mode isn't open
 local function InWorld()
    if addon.Editor and addon.Editor.IsOpen() then return false, "crossbar editor" end
+   -- (Improved Forever's windows take the pad with catcher frames of their
+   -- own, not the game's binding stack: its panel, and its docked windows)
+   local IF = _G.ImprovedForever
+   if IF then
+      if IF.Menu and IF.Menu.IsOpen and IF.Menu.IsOpen() then return false, "Improved Forever panel" end
+      if IF.Focus and IF.Focus.OursOpen and IF.Focus.OursOpen() then return false, "Improved Forever window" end
+   end
    local binding, why = BindModeOpen()
    if binding then return false, "bind mode (" .. why .. ")" end
    local manager = _G.GamepadSharedUtility and GamepadSharedUtility.InputBindingManager

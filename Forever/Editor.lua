@@ -38,7 +38,8 @@ local CROSSES = {
    { name = "Face",  up = 2, left = 4, right = 1, down = 3 },
    { name = "Expanded", up = 10, left = 12, right = 9, down = 11, small = true },
 }
-local DEFAULT_KEYS = { "PAD2", "PAD4", "PAD1", "PAD3", "PADDRIGHT", "PADDUP", "PADDDOWN", "PADDLEFT" }
+local DEFAULT_KEYS = { "PAD2", "PAD4", "PAD1", "PAD3", "PADDRIGHT", "PADDUP", "PADDDOWN", "PADDLEFT",
+                       "PADDRIGHT", "PADDUP", "PADDDOWN", "PADDLEFT" }
 local TABS = { "Spells", "Items", "Macros" }
 local VISIBLE = 14
 local ROW_H = 26
@@ -64,12 +65,18 @@ local function SlotKeys()
    local keys = {}
    local pad = addon.Config and addon.Config.PadActions
    if pad then
+      -- (1-8 from the plain trigger actions; 9-12, the expanded slots, from
+      -- whichever modifier's trigger action names them)
       for _, attributes in pairs(pad) do
-         local n = tonumber(tostring(attributes.TRIGACTION or ""):match("^HOTBARBTN(%d+)$"))
-         if n and n <= 8 and attributes.BIND then keys[n] = attributes.BIND end
+         for field, value in pairs(attributes) do
+            if type(field) == "string" and field:find("TRIGACTION$") and attributes.BIND then
+               local n = tonumber(tostring(value):match("^HOTBARBTN(%d+)$"))
+               if n and (field == "TRIGACTION" or not keys[n]) then keys[n] = attributes.BIND end
+            end
+         end
       end
    end
-   for n = 1, 8 do keys[n] = keys[n] or DEFAULT_KEYS[n] end
+   for n = 1, 12 do keys[n] = keys[n] or DEFAULT_KEYS[n] end
    return keys
 end
 
@@ -292,9 +299,10 @@ end
 --           switch to the WXHB bars), the slot's button puts it there.
 --           Y cycles the view: L2 | R2, WXHB (L2>R2 | R2>L2), Expanded.
 local VIEWS = {
-   { name = "L2  |  R2",         halves = { { row = 1, crosses = { 1, 2 } }, { row = 2, crosses = { 1, 2 } } } },
-   { name = "L2>R2  |  R2>L2",   halves = { { row = 3, crosses = { 1, 2 } }, { row = 4, crosses = { 1, 2 } } } },
-   { name = "Expanded",          halves = { { row = 1, crosses = { 3 } },    { row = 2, crosses = { 3 } } } },
+   { row = 1, crosses = { 1, 2, 3 } },
+   { row = 2, crosses = { 1, 2, 3 } },
+   { row = 3, crosses = { 1, 2, 3 } },
+   { row = 4, crosses = { 1, 2, 3 } },
 }
 local LIST_W = 340
 local SLOT_GAP = 6
@@ -314,7 +322,7 @@ local function LegendText()
    else
       parts = {
          "hold " .. Glyph("PADLTRIGGER") .. " / " .. Glyph("PADRTRIGGER") .. ", press a button: put it there",
-         Glyph("PAD4") .. " view",
+         Glyph("PAD4") .. " bar",
          Glyph("PADLSHOULDER") .. Glyph("PADRSHOULDER") .. " set",
          Glyph("PAD3") .. " empty",
          Glyph("PAD2") .. " back",
@@ -332,41 +340,41 @@ local function TriggerRow()
 end
 
 local function CurrentView()
-   local row = TriggerRow()
-   if row == 3 or row == 4 then return 2 end
-   if row == 1 or row == 2 then return state.view == 3 and 3 or 1 end
-   return state.view
+   return TriggerRow() or state.view
 end
 
 -- Places the slots of the view shown; hides the rest
-local assign, assignTitle, viewText, halfLabels = nil, nil, nil, {}
+local assign, assignTitle, viewText, halfLabels, crossLabels = nil, nil, nil, {}, {}
 local function Layout()
    local view = VIEWS[CurrentView()]
    for _, s in ipairs(slotsUI) do s.visible = false end
+   halfLabels[1]:ClearAllPoints()
+   halfLabels[1]:SetPoint("BOTTOMLEFT", assign, "TOPLEFT", 0, -26)
+   halfLabels[1]:SetText(ROWS[view.row].label)
+   halfLabels[2]:Hide()
    local x = 0
-   for h, half in ipairs(view.halves) do
-      halfLabels[h]:ClearAllPoints()
-      halfLabels[h]:SetPoint("BOTTOMLEFT", assign, "TOPLEFT", x, -26)
-      halfLabels[h]:SetText(ROWS[half.row].label)
-      halfLabels[h].row = half.row
-      for _, c in ipairs(half.crosses) do
-         local cx, cy = x + CROSS_W / 2, -36 - CROSS_W / 2
-         for _, s in ipairs(slotsUI) do
-            if s.row == half.row and s.cross == c then
-               local px, py = cx + s.dx * STEP, cy + s.dy * STEP
-               s:ClearAllPoints()
-               s:SetPoint("CENTER", assign, "TOPLEFT", px, py)
-               s.cx, s.cy = px, py
-               s.visible = true
-            end
+   for _, c in ipairs(view.crosses) do
+      local cx, cy = x + CROSS_W / 2, -36 - CROSS_W / 2
+      for _, s in ipairs(slotsUI) do
+         if s.row == view.row and s.cross == c then
+            local px, py = cx + s.dx * STEP, cy + s.dy * STEP
+            s:ClearAllPoints()
+            s:SetPoint("CENTER", assign, "TOPLEFT", px, py)
+            s.cx, s.cy = px, py
+            s.visible = true
          end
-         x = x + CROSS_W + 8
       end
-      x = x + HALF_GAP
+      if not crossLabels[c] then
+         crossLabels[c] = assign:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+      end
+      crossLabels[c]:ClearAllPoints()
+      crossLabels[c]:SetPoint("TOP", assign, "TOPLEFT", cx, cy - CROSS_W / 2 - 2)
+      crossLabels[c]:SetText(CROSSES[c].name)
+      x = x + CROSS_W + (c == 2 and 30 or 12)
    end
    for _, s in ipairs(slotsUI) do s:SetShown(s.visible) end
-   local width = x - HALF_GAP
-   assign:SetSize(width, 36 + CROSS_W + 8)
+   local width = x - 12
+   assign:SetSize(width, 36 + CROSS_W + 20)
    return width
 end
 
@@ -411,11 +419,13 @@ Refresh = function()
       width = Layout()
       local p = state.picked
       assignTitle:SetText(p and ("|T" .. tostring(p.icon) .. ":20|t  " .. p.name) or "Drop it on a slot")
-      viewText:SetText("|cff999999" .. Glyph("PAD4", 14) .. "|r " .. VIEWS[CurrentView()].name)
-      local lit = TriggerRow()
-      for _, label in ipairs(halfLabels) do
-         label:SetAlpha((not lit or label.row == lit) and 1 or 0.35)
+      local names = {}
+      for v, view in ipairs(VIEWS) do
+         local label = ROWS[view.row].label
+         names[v] = (v == CurrentView()) and ("|cffffd100" .. label .. "|r") or ("|cff777777" .. label .. "|r")
       end
+      viewText:SetText(Glyph("PAD4", 14) .. "  " .. table.concat(names, "  "))
+      local lit = nil
       local keys = SlotKeys()
       if not (slotsUI[state.cursor] and slotsUI[state.cursor].visible) then
          for n, s in ipairs(slotsUI) do if s.visible then state.cursor = n break end end
@@ -427,13 +437,13 @@ Refresh = function()
             s.icon:SetTexture(texture or nil)
             s.icon:SetShown(texture ~= nil)
             s.empty:SetShown(texture == nil)
-            local key = s.index <= 8 and keys[s.index]
-            s.key:SetText(key and Glyph(key, 20) or ("E" .. (s.index - 8)))
+            local key = keys[s.index]
+            s.key:SetText(key and Glyph(key, 20) or "")
             s.light:SetShown(state.cursor == n)
             s:SetAlpha((not lit or s.row == lit) and 1 or 0.3)
          end
       end
-      win:SetSize(math.max(width + 32, 420), 64 + 36 + CROSS_W + 8 + 44)
+      win:SetSize(math.max(width + 32, 520), 64 + 36 + CROSS_W + 20 + 44)
    end
    legend:SetText(LegendText())
    ShowTip()
