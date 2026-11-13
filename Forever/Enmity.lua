@@ -103,16 +103,26 @@ local function Edge(parent, layer, colour)
    return t
 end
 
--- A bevelled trim round `box` (its edges drawn just inside it); the inset
+-- A bevelled trim round `box` (its edges drawn just inside it); the inset.
+-- Rounded corners, the pixel way: the outline skips each corner pixel and
+-- steps in one, diagonally (a pixel of it drawn over the next layer).
 local function Bevel(box)
    for n, c in ipairs(BEVEL) do
       local i = n - 1
+      local cut = (n == 1) and 1 or 0
       local top, left = Edge(box, n, c.light), Edge(box, n, c.light)
       local bottom, right = Edge(box, n, c.dark), Edge(box, n, c.dark)
-      top:SetPoint("TOPLEFT", i, -i); top:SetPoint("TOPRIGHT", -i, -i); top:SetHeight(1)
-      bottom:SetPoint("BOTTOMLEFT", i, i); bottom:SetPoint("BOTTOMRIGHT", -i, i); bottom:SetHeight(1)
-      left:SetPoint("TOPLEFT", i, -i); left:SetPoint("BOTTOMLEFT", i, i); left:SetWidth(1)
-      right:SetPoint("TOPRIGHT", -i, -i); right:SetPoint("BOTTOMRIGHT", -i, i); right:SetWidth(1)
+      top:SetPoint("TOPLEFT", i + cut, -i); top:SetPoint("TOPRIGHT", -i - cut, -i); top:SetHeight(1)
+      bottom:SetPoint("BOTTOMLEFT", i + cut, i); bottom:SetPoint("BOTTOMRIGHT", -i - cut, i); bottom:SetHeight(1)
+      left:SetPoint("TOPLEFT", i, -i - cut); left:SetPoint("BOTTOMLEFT", i, i + cut); left:SetWidth(1)
+      right:SetPoint("TOPRIGHT", -i, -i - cut); right:SetPoint("BOTTOMRIGHT", -i, i + cut); right:SetWidth(1)
+   end
+   local outline = BEVEL[1].light
+   for _, corner in ipairs({ { "TOPLEFT", 1, -1 }, { "TOPRIGHT", -1, -1 }, { "BOTTOMLEFT", 1, 1 }, { "BOTTOMRIGHT", -1, 1 } }) do
+      local px = box:CreateTexture(nil, "BORDER", nil, 7)
+      px:SetColorTexture(outline[1], outline[2], outline[3], outline[4])
+      px:SetSize(1, 1)
+      px:SetPoint(corner[1], corner[2], corner[3])
    end
    return #BEVEL
 end
