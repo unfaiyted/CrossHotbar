@@ -46,10 +46,10 @@ local function Plain(v)
 end
 
 -- The rules, the same as the secure buttons' (below), so the list on screen
--- and D-pad left / right agree: enemy nameplates, alive and attackable;
--- first those targeting you, then those fighting someone else (their target
--- exists), each in nameplate order. (Threat isn't used: secure code can't
--- read it, and it's secret anyway.)
+-- and D-pad left / right agree: enemy nameplates, alive and attackable,
+-- fighting someone (their target exists), in nameplate order. Red: it's on
+-- you (the list can tell; the secure buttons can't, so it doesn't reorder).
+-- (Threat isn't used: secure code can't read it, and it's secret anyway.)
 local function Hostile(unit)
    return UnitExists(unit) and Plain(UnitCanAttack("player", unit)) and not Plain(UnitIsDead(unit))
 end
@@ -57,25 +57,21 @@ end
 local diagAt = 0
 local function Scan()
    wipe(list)
-   local mine, others, plates = {}, {}, 0
+   local plates, onMe = 0, 0
    for i = 1, 40 do
       local unit = "nameplate" .. i
       if UnitExists(unit) then plates = plates + 1 end
-      if Hostile(unit) then
-         if Plain(UnitIsUnit(unit .. "target", "player")) then
-            mine[#mine + 1] = { unit = unit, targetsMe = true }
-         elseif UnitExists(unit .. "target") then
-            others[#others + 1] = { unit = unit, targetsMe = false }
-         end
+      if Hostile(unit) and UnitExists(unit .. "target") then
+         local targetsMe = Plain(UnitIsUnit(unit .. "target", "player"))
+         if targetsMe then onMe = onMe + 1 end
+         list[#list + 1] = { unit = unit, targetsMe = targetsMe }
       end
    end
-   for _, e in ipairs(mine) do list[#list + 1] = e end
-   for _, e in ipairs(others) do list[#list + 1] = e end
    if UnitAffectingCombat("player") and GetTime() - diagAt > 3 and addon.ForeverLog then
       diagAt = GetTime()
       local parts = {}
       for i = 1, math.min(#list, 4) do parts[i] = list[i].unit .. (list[i].targetsMe and "*" or "") end
-      addon:ForeverLog(("enmity scan: plates %d, listed %d (%d on you) %s"):format(plates, #list, #mine, table.concat(parts, " ")))
+      addon:ForeverLog(("enmity scan: plates %d, listed %d (%d on you) %s"):format(plates, #list, onMe, table.concat(parts, " ")))
    end
 end
 
@@ -181,57 +177,55 @@ local function TargetButton(name, step)
    function b:EnmityLog(msg) if addon.ForeverLog then addon:ForeverLog("enmity: " .. msg) end end
    SecureHandlerWrapScript(b, "OnClick", b, [[
       self:SetAttribute("type", nil)
-      -- (the list, as the one on screen: targeting you first, then fighting
-      -- someone else; nameplate order)
+      -- (the list, as the one on screen: enemy nameplates fighting someone
+      -- (their target exists), alive and attackable where the restricted
+      -- environment has those checks; nameplate order. It has UnitExists, not
+      -- UnitIsUnit, and macro conditions don't take nameplate units.)
+      local canAttack, isDead = PlayerCanAttack, UnitIsDead
+      if not self:GetAttribute("told") then
+         self:SetAttribute("told", true)
+         self:CallMethod("EnmityLog", "secure checks: PlayerCanAttack=" .. (canAttack and "y" or "n")
+            .. " UnitIsDead=" .. (isDead and "y" or "n"))
+      end
       local units, count = newtable(), 0
-      for pass = 1, 2 do
-         for i = 1, 40 do
-            local u = "nameplate" .. i
-            if SecureCmdOptionParse("[@" .. u .. ",harm,nodead] 1") == "1" then
-               local onMe = UnitIsUnit(u .. "target", "player")
-               if (pass == 1 and onMe) or (pass == 2 and not onMe and UnitExists(u .. "target")) then
-                  count = count + 1
-                  units[count] = u
-               end
-            end
+      for i = 1, 40 do
+         local u = "nameplate" .. i
+         if UnitExists(u) and UnitExists(u .. "target")
+            and (not canAttack or canAttack(u)) and (not isDead or not isDead(u)) then
+            count = count + 1
+            units[count] = i
          end
       end
       if count == 0 then
-         -- (diagnostics: what each check gives for the first nameplates)
-         for i = 1, 4 do
-            local u = "nameplate" .. i
-            local ex = UnitExists(u)
-            local p1 = SecureCmdOptionParse("[@" .. u .. ",exists] 1") or "nil"
-            local p2 = SecureCmdOptionParse("[@" .. u .. ",harm] 1") or "nil"
-            local p3 = SecureCmdOptionParse("[@" .. u .. ",harm,nodead] 1") or "nil"
-            self:CallMethod("EnmityLog", "diag " .. u .. " exists=" .. (ex and "y" or "n")
-               .. " [exists]=" .. p1 .. " [harm]=" .. p2 .. " [harm,nodead]=" .. p3)
-            if ex then
-               local onMe = UnitIsUnit(u .. "target", "player")
-               self:CallMethod("EnmityLog", "diag " .. u .. " targets me=" .. (onMe and "y" or "n")
-                  .. " target exists=" .. (UnitExists(u .. "target") and "y" or "n"))
-            end
-         end
          self:CallMethod("EnmityLog", "press: list empty")
          return false
       end
+      -- (where we are: the nameplate targeted last by these buttons; the next
+      -- one after it in the list, or the previous one)
       local step = self:GetAttribute("step")
+      local shared = self:GetFrameRef("shared")
+      local last = shared and shared:GetAttribute("last") or 0
       local at = 0
-      for i = 1, count do
-         if UnitIsUnit(units[i], "target") then at = i end
-      end
+      for i = 1, count do if units[i] == last then at = i end end
       local nextAt
       if at == 0 then nextAt = (step > 0) and 1 or count
       else nextAt = ((at - 1 + step) % count) + 1 end
-      self:CallMethod("EnmityLog", "press: " .. at .. " -> " .. nextAt .. " " .. units[nextAt] .. " of " .. count)
-      self:SetAttribute("unit", units[nextAt])
+      local index = units[nextAt]
+      if shared then shared:SetAttribute("last", index) end
+      self:CallMethod("EnmityLog", "press: " .. at .. " -> " .. nextAt .. " nameplate" .. index .. " of " .. count)
+      self:SetAttribute("unit", "nameplate" .. index)
       self:SetAttribute("type", "target")
    ]])
    return b
 end
 
-TargetButton("CHBEnmityNext", 1)
-TargetButton("CHBEnmityPrev", -1)
+local nextButton = TargetButton("CHBEnmityNext", 1)
+local prevButton = TargetButton("CHBEnmityPrev", -1)
+-- (the position both share: a secure frame of ours)
+local shared = CreateFrame("Frame", "CHBEnmityState", UIParent, "SecureHandlerBaseTemplate")
+shared:SetAttribute("last", 0)
+SecureHandlerSetFrameRef(nextButton, "shared", shared)
+SecureHandlerSetFrameRef(prevButton, "shared", shared)
 
 ---------------------------------------------------------------------------
 -- Setting up: enemy nameplates on; the list's place; D-pad left / right
