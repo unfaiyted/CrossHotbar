@@ -10,7 +10,10 @@
 --   level in gold, the name white; health green, power in its colour (mana
 --   blue, rage red, energy yellow), both in a rounded bronze trim, their
 --   values under them; buffs on the right (when the game lets them be read).
---   Your target: a gold corner bracket (as FFXIV's); attacked: a red edge.
+--   Selected (the D-pad's, or your target): gold corner brackets (as
+--   FFXIV's), the ring and name gold, a soft glow behind the icon
+--   (CrossHotbar's white navigation box is hidden while the list is on).
+--   Attacked: a red edge.
 --   Dead / ghost / offline replace the values; out of range: faded.
 -- Each row is a secure unit button (CHBPartyUnitButton1-5): left click
 -- targets, right click opens the unit's menu. GroupNavigator, with this list
@@ -132,6 +135,14 @@ for i, unit in ipairs(UNITS) do
    ring:SetPoint("LEFT", 0, 0)
    ring:SetTexture("Interface\\CHARACTERFRAME\\TempPortraitAlphaMask")
    ring:SetVertexColor(BRASS_LIGHT[1], BRASS_LIGHT[2], BRASS_LIGHT[3], 1)
+   b.ring = ring
+   -- (selected: a soft gold glow behind the ring)
+   b.glow = b:CreateTexture(nil, "BACKGROUND", nil, 0)
+   b.glow:SetSize(ICON + 14, ICON + 14)
+   b.glow:SetPoint("CENTER", ring)
+   b.glow:SetTexture("Interface\\CHARACTERFRAME\\TempPortraitAlphaMask")
+   b.glow:SetVertexColor(1, 0.8, 0.3, 0.35)
+   b.glow:Hide()
    local well = b:CreateTexture(nil, "BACKGROUND", nil, 2)
    well:SetSize(ICON + 1, ICON + 1)
    well:SetPoint("CENTER", ring)
@@ -184,17 +195,18 @@ for i, unit in ipairs(UNITS) do
       b.buffs[k] = t
    end
 
-   -- (your target: a gold corner bracket, as FFXIV's; attacked: a red edge)
+   -- (selected: gold corner brackets, as FFXIV's)
    b.bracket = CreateFrame("Frame", nil, b)
    b.bracket:SetAllPoints()
-   for _, c in ipairs({ { "TOPLEFT", 1, 1, 10, 2 }, { "TOPLEFT", 1, 1, 2, 10 },
-                        { "BOTTOMRIGHT", -1, -1, 10, 2 }, { "BOTTOMRIGHT", -1, -1, 2, 10 } }) do
+   for _, c in ipairs({ { "TOPLEFT", -2, 2, 10, 2 }, { "TOPLEFT", -2, 2, 2, 10 },
+                        { "BOTTOMRIGHT", 2, -2, 10, 2 }, { "BOTTOMRIGHT", 2, -2, 2, 10 } }) do
       local t = b.bracket:CreateTexture(nil, "OVERLAY")
       t:SetColorTexture(1, 0.82, 0.3, 1)
       t:SetSize(c[4], c[5])
-      t:SetPoint(c[1], b, c[1], (c[2] < 0) and 2 or -2, (c[3] < 0) and -2 or 2)
+      t:SetPoint(c[1], b, c[1], c[2], c[3])
    end
    b.bracket:Hide()
+   -- (attacked: a red edge)
    b.aggro = b:CreateTexture(nil, "OVERLAY")
    b.aggro:SetColorTexture(0.9, 0.15, 0.1, 1)
    b.aggro:SetSize(2, ROW_H - 6)
@@ -257,7 +269,18 @@ local function Update(b)
       if Plain(checked) then inRange = Plain(r) end
    end
    b:SetAlpha((state ~= "" or not inRange) and 0.45 or 1)
-   b.bracket:SetShown(Plain(UnitIsUnit(unit, "target")))
+   -- (selected: the one the D-pad is on, or your target: the ring and name gold)
+   local nav = addon.GroupNavigator and addon.GroupNavigator:GetAttribute("unit")
+   local selected = Plain(UnitIsUnit(unit, "target")) or (type(nav) == "string" and Plain(UnitIsUnit(unit, nav)))
+   if selected then
+      b.ring:SetVertexColor(1, 0.82, 0.3, 1)
+      b.name:SetTextColor(1, 0.82, 0.3)
+   else
+      b.ring:SetVertexColor(BRASS_LIGHT[1], BRASS_LIGHT[2], BRASS_LIGHT[3], 1)
+      b.name:SetTextColor(1, 1, 1)
+   end
+   b.glow:SetShown(selected)
+   b.bracket:SetShown(selected)
    local threat = UnitThreatSituation and UnitThreatSituation(unit)
    b.aggro:SetShown(not Secret(threat) and type(threat) == "number" and threat >= 2)
    pcall(Buffs, b, unit)
@@ -314,6 +337,10 @@ local function Apply()
    if addon.GroupNavigator and addon.GroupNavigator.AddUnitFrameRefs and not InCombatLockdown() then
       addon.GroupNavigator:AddUnitFrameRefs()
    end
+   -- (CrossHotbar's navigation box is replaced by the rows' own highlight; a
+   -- frame of CrossHotbar's, so its alpha is ours to set; raids keep it)
+   local box = addon.GroupNavigator and addon.GroupNavigator.SoftTargetFrame
+   if box then box:SetAlpha((s.party and inGroup) and 0 or 1) end
 end
 P.Apply = Apply
 
