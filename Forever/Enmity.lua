@@ -247,61 +247,95 @@ end
 ---------------------------------------------------------------------------
 local BORDER_MINE, BORDER_DEBUFF, BORDER_BUFF = { 0.54, 0.46, 0.32 }, { 0.6, 0.12, 0.1 }, { 0.2, 0.55, 0.2 }
 
-local auraDiag = {}   -- (what the aura API did, for the debug log)
-local function AuraAt(unit, index, filter)
-   if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
-      local ok, aura = pcall(C_UnitAuras.GetAuraDataByIndex, unit, index, filter)
-      if not ok then auraDiag.err = tostring(aura) end
-      return ok and aura or nil
-   elseif UnitAura then
-      local name, icon = UnitAura(unit, index, filter)
-      return name and { icon = icon } or nil
+-- Forever blocks reading an enemy's auras in a fight ("Auras cannot be
+-- accessed when secret"), even your own debuffs. So they're followed from
+-- the combat log instead, as they're applied and fade: by enemy GUID, who
+-- cast them (you / your pet, the party, anyone), debuff or buff.
+local tracked = {}          -- [destGUID] = { [key] = { spell, icon, mine, party, buff, at } }
+local playerGUID
+local auraDiag = { events = 0 }
+
+local AFFIL_MINE = COMBATLOG_OBJECT_AFFILIATION_MINE or 0x1
+local AFFIL_PARTY = COMBATLOG_OBJECT_AFFILIATION_PARTY or 0x2
+local AFFIL_RAID = COMBATLOG_OBJECT_AFFILIATION_RAID or 0x4
+
+local function SpellIcon(spellID)
+   if C_Spell and C_Spell.GetSpellTexture then return C_Spell.GetSpellTexture(spellID) end
+   return GetSpellTexture and GetSpellTexture(spellID)
+end
+
+local function OnCombatLog()
+   local _, sub, _, srcGUID, _, srcFlags, _, dstGUID, _, _, _, spellID, _, _, auraType = CombatLogGetCurrentEventInfo()
+   auraDiag.events = auraDiag.events + 1
+   if sub == "UNIT_DIED" or sub == "UNIT_DESTROYED" or sub == "PARTY_KILL" then
+      if dstGUID then tracked[dstGUID] = nil end
+      return
+   end
+   if not (dstGUID and spellID) then return end
+   if sub == "SPELL_AURA_APPLIED" or sub == "SPELL_AURA_REFRESH" or sub == "SPELL_AURA_APPLIED_DOSE" then
+      local list = tracked[dstGUID] or {}
+      tracked[dstGUID] = list
+      local flags = srcFlags or 0
+      local mine = srcGUID == playerGUID or bit.band(flags, AFFIL_MINE) ~= 0
+      local party = not mine and bit.band(flags, AFFIL_PARTY + AFFIL_RAID) ~= 0
+      list[tostring(spellID) .. ":" .. tostring(srcGUID)] = {
+         spell = spellID, icon = SpellIcon(spellID), mine = mine, party = party,
+         buff = auraType == "BUFF", at = GetTime(),
+      }
+   elseif sub == "SPELL_AURA_REMOVED" or sub == "SPELL_AURA_BROKEN" or sub == "SPELL_AURA_BROKEN_SPELL" then
+      local list = tracked[dstGUID]
+      if list then list[tostring(spellID) .. ":" .. tostring(srcGUID)] = nil end
    end
 end
 
--- Your debuffs first, then the others' (when who cast them can be read),
--- then the enemy's buffs
+local log = CreateFrame("Frame")
+log:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
+log:RegisterEvent("PLAYER_ENTERING_WORLD")
+log:RegisterEvent("PLAYER_REGEN_ENABLED")
+log:SetScript("OnEvent", function(_, event)
+   if event == "COMBAT_LOG_EVENT_UNFILTERED" then
+      local ok, err = pcall(OnCombatLog)
+      if not ok then auraDiag.err = tostring(err) end
+   elseif event == "PLAYER_ENTERING_WORLD" then
+      playerGUID = UnitGUID("player")
+      wipe(tracked)
+   else
+      -- (out of a fight: forget enemies not on a nameplate any more)
+      local seen = {}
+      for i = 1, 40 do
+         local guid = UnitGUID("nameplate" .. i)
+         if guid and not Secret(guid) then seen[guid] = true end
+      end
+      for guid in pairs(tracked) do if not seen[guid] then tracked[guid] = nil end end
+   end
+end)
+
+-- Your debuffs first, then the party's, then anyone else's, then its buffs
+local ORDER = function(a, b)
+   local function rank(x) return x.buff and 4 or (x.mine and 1 or (x.party and 2 or 3)) end
+   local ra, rb = rank(a), rank(b)
+   if ra ~= rb then return ra < rb end
+   return a.at < b.at
+end
+
 local function Auras(r, unit)
+   local guid = UnitGUID(unit)
+   local list = guid and not Secret(guid) and tracked[guid]
+   local items = {}
+   if list then for _, aura in pairs(list) do items[#items + 1] = aura end end
+   table.sort(items, ORDER)
    local n = 0
-   local function add(aura, border)
-      if n >= MAX_AURAS then return end
+   for _, aura in ipairs(items) do
+      if n >= MAX_AURAS then break end
       n = n + 1
       local a = r.auras[n]
       a.icon:SetTexture(aura.icon)
+      local border = aura.buff and BORDER_BUFF or (aura.mine and BORDER_MINE or BORDER_DEBUFF)
       a.border:SetColorTexture(border[1], border[2], border[3], 1)
       a:Show()
    end
-   local mineCount, allCount = 0, 0
-   for k = 1, 20 do
-      local aura = AuraAt(unit, k, "HARMFUL|PLAYER")
-      if not aura then break end
-      mineCount = mineCount + 1
-      add(aura, BORDER_MINE)
-   end
-   for k = 1, 40 do
-      if not AuraAt(unit, k, "HARMFUL") then break end
-      allCount = allCount + 1
-   end
-   auraDiag.mine, auraDiag.all = mineCount, allCount
-   auraDiag.api = (C_UnitAuras and C_UnitAuras.GetAuraDataByIndex) and "C_UnitAuras" or (UnitAura and "UnitAura" or "none")
-   -- (the old API too, as a check)
-   if UnitAura then
-      local okOld, nameOld = pcall(UnitAura, unit, 1, "HARMFUL")
-      auraDiag.old = okOld and (type(nameOld) == "string" and not Secret(nameOld) and nameOld or tostring(type(nameOld))) or ("err " .. tostring(nameOld))
-   end
-   for k = 1, 40 do
-      local aura = AuraAt(unit, k, "HARMFUL")
-      if not aura or n >= MAX_AURAS then break end
-      local mine = aura.isFromPlayerOrPlayerPet
-      if not Secret(mine) and not mine then add(aura, BORDER_DEBUFF) end
-   end
-   for k = 1, 20 do
-      local aura = AuraAt(unit, k, "HELPFUL")
-      if not aura or n >= MAX_AURAS then break end
-      add(aura, BORDER_BUFF)
-   end
    for k = n + 1, MAX_AURAS do r.auras[k]:Hide() end
-   auraDiag.shown = n
+   auraDiag.shown = (auraDiag.shown or 0) + n
 end
 
 -- The cast (or channel): its times into the bar (secret is fine); the glow
@@ -384,9 +418,10 @@ local auraLogAt = 0
 ticker:SetScript("OnUpdate", function(_, elapsed)
    if UnitAffectingCombat("player") and #list > 0 and GetTime() - auraLogAt > 3 and addon.ForeverLog then
       auraLogAt = GetTime()
-      addon:ForeverLog(("enmity auras: api %s, mine %s, all harmful %s, shown %s, old UnitAura #1 %s%s"):format(
-         tostring(auraDiag.api), tostring(auraDiag.mine), tostring(auraDiag.all), tostring(auraDiag.shown),
-         tostring(auraDiag.old), auraDiag.err and (", error: " .. auraDiag.err) or ""))
+      addon:ForeverLog(("enmity auras: combat log events %d, enemies tracked %d, icons shown %d%s"):format(
+         auraDiag.events, (function() local c = 0 for _ in pairs(tracked) do c = c + 1 end return c end)(),
+         auraDiag.shown or 0, auraDiag.err and (", error: " .. auraDiag.err) or ""))
+      auraDiag.shown = 0
       auraDiag.err = nil
    end
    for _, r in ipairs(rows) do
