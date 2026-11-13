@@ -396,12 +396,23 @@ local function Probe()
       if fr < aL or fl > aR or ft < aB or fb > aT then return end
       if w * k > (aR - aL) * 3 then return end   -- (whole-screen frames)
       local name = f.GetName and f:GetName()
-      if type(name) ~= "string" or Secret(name) then name = "(unnamed)" end
-      if name:find("^CHBParty") then return end
+      if type(name) ~= "string" or Secret(name) then
+         local ok, path = pcall(f.GetDebugName, f)
+         name = (ok and type(path) == "string" and not Secret(path)) and ("(unnamed) " .. path) or "(unnamed)"
+      end
+      if name:find("CHBParty") then return end
+      if f:GetFrameStrata() == "LOW" then return end   -- (the party frames themselves)
       local parent = f:GetParent()
       local pname = parent and parent.GetName and parent:GetName()
       log(("%s [%s] strata=%s level=%s parent=%s"):format(name, tostring(f:GetObjectType()), tostring(f:GetFrameStrata()),
          tostring(f:GetFrameLevel()), (type(pname) == "string" and not Secret(pname)) and pname or "?"))
+      for _, region in ipairs({ f:GetRegions() }) do
+         if region.IsShown and region:IsShown() and region.GetTexture then
+            local ok, tex = pcall(region.GetTexture, region)
+            local ok2, atlas = pcall(region.GetAtlas, region)
+            log("   texture " .. tostring(ok and tex) .. " atlas " .. tostring(ok2 and atlas))
+         end
+      end
       n = n + 1
    end
    local f = EnumerateFrames()
