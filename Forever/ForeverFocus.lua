@@ -96,6 +96,10 @@ local function InWorld()
       if IF.Menu and IF.Menu.IsOpen and IF.Menu.IsOpen() then return false, "Improved Forever panel" end
       if IF.Focus and IF.Focus.OursOpen and IF.Focus.OursOpen() then return false, "Improved Forever window" end
    end
+   -- (Improved Forever's R3 wheel: it binds Circle / R2 / R3 for itself while
+   -- up; taking ours back over it left it with no way to close)
+   local wheel = _G.ImprovedForeverRing
+   if wheel and wheel:IsShown() then return false, "Improved Forever wheel" end
    local binding, why = BindModeOpen()
    if binding then return false, "bind mode (" .. why .. ")" end
    local manager = _G.GamepadSharedUtility and GamepadSharedUtility.InputBindingManager
