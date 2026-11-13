@@ -374,6 +374,7 @@ local function LegendText()
          Glyph("PADDUP") .. Glyph("PADDDOWN") .. " choose",
          Glyph("PADDLEFT") .. Glyph("PADDRIGHT") .. " category",
          Glyph("PAD1") .. " take",
+         Glyph("PADBACK") .. " copy set",
          Glyph("PAD4") .. " one bar " .. ((addon.ForeverSettings and addon:ForeverSettings() and addon:ForeverSettings().singleBar) and "on" or "off"),
          Glyph("PADFORWARD") .. " Improved Forever",
          Glyph("PAD2") .. " close",
@@ -425,7 +426,7 @@ local function Layout()
       return 480
    end
    halfLabels[1]:ClearAllPoints()
-   halfLabels[1]:SetPoint("BOTTOMLEFT", assign, "TOPLEFT", 0, -26)
+   halfLabels[1]:SetPoint("BOTTOM", assign, "TOP", 0, -26)
    halfLabels[1]:SetText(ROWS[row].label .. ((state.expanded and row <= 2 and TriggerRow()) and "  expanded" or ""))
    halfLabels[1]:Show()
    local view = { row = row }
@@ -616,7 +617,84 @@ local function Placed(displaced)
    end
 end
 
+---------------------------------------------------------------------------
+-- Copying a set onto another (every bar, every slot; a confirmation first:
+-- it replaces everything on the target set)
+---------------------------------------------------------------------------
+local copyPanel
+
+-- What a slot holds, as something that can be picked up again
+local function SlotAction(slot)
+   local kind, id = GetActionInfo(slot)
+   if kind == "spell" or kind == "item" or kind == "macro" then return { kind = kind, id = id } end
+   if kind == nil then return { kind = "empty" } end
+   return nil   -- (a flyout, mount...: left as it is)
+end
+
+local function CopySet(from, to)
+   if InCombatLockdown() then Say("can't change bars in combat.") return end
+   -- (read everything first: some sets share pages, so writing as we go would read back our own writes)
+   local plan, skipped = {}, 0
+   for row = 1, #ROWS do
+      for index = 1, 12 do
+         local src, dst = ActionSlot(from, row, index), ActionSlot(to, row, index)
+         if src and dst and src ~= dst then
+            local action = SlotAction(src)
+            if action then plan[#plan + 1] = { dst = dst, action = action } else skipped = skipped + 1 end
+         end
+      end
+   end
+   for _, step in ipairs(plan) do
+      ClearCursor()
+      if step.action.kind == "empty" then
+         if HasAction(step.dst) then pcall(PickupAction, step.dst) end
+      else
+         if pcall(Pickup, step.action) and GetCursorInfo() then pcall(PlaceAction, step.dst) end
+      end
+      ClearCursor()
+   end
+   Log(("copied set %d -> %d: %d slots, %d skipped"):format(from, to, #plan, skipped))
+   Say(("Set %d copied onto Set %d%s."):format(from, to, skipped > 0 and (" (" .. skipped .. " slots couldn't be copied)") or ""))
+   PlaySound(SOUNDKIT and SOUNDKIT.IG_ABILITY_ICON_DROP or 838)
+end
+
+local function CopyRefresh()
+   if not copyPanel then return end
+   local c = state.copy
+   copyPanel:SetShown(c ~= nil)
+   if not c then return end
+   copyPanel.text:SetText(("Copy |cffffd100Set %d|r onto |cffffd100Set %d|r?"):format(c.from, c.to))
+   copyPanel.warn:SetText(("This replaces |cffff6040everything|r on Set %d: both crossbars, both WXHB bars and the expanded slots."):format(c.to))
+   copyPanel.keys:SetText(Glyph("PAD1") .. " copy     " .. Glyph("PADLSHOULDER") .. Glyph("PADRSHOULDER") .. " target set     " .. Glyph("PAD2") .. " cancel")
+end
+
+local function CopyStart()
+   state.copy = { from = state.set, to = state.set % SETS + 1 }
+   CopyRefresh()
+end
+
+local function CopyStep(delta)
+   local c = state.copy
+   repeat c.to = (c.to - 1 + delta) % SETS + 1 until c.to ~= c.from
+   CopyRefresh()
+end
+
+local function CopyDone(confirm)
+   local c = state.copy
+   state.copy = nil
+   CopyRefresh()
+   if confirm and c then CopySet(c.from, c.to) end
+   Refresh()
+end
+
 local function OnPad(_, key)
+   if state.copy then
+      if key == "PAD1" then CopyDone(true)
+      elseif key == "PAD2" then CopyDone(false)
+      elseif key == "PADLSHOULDER" then CopyStep(-1)
+      elseif key == "PADRSHOULDER" then CopyStep(1) end
+      return
+   end
    if key == "PADLTRIGGER" or key == "PADRTRIGGER" then
       local side = key == "PADLTRIGGER" and "L" or "R"
       local now = GetTime()
@@ -658,6 +736,7 @@ local function OnPad(_, key)
       local on = addon:ToggleSingleBar()
       Say("single-bar mode " .. (on and "on" or "off") .. ".")
       Refresh()
+   elseif key == "PADBACK" then CopyStart()
    elseif key == "PADFORWARD" then
       local IF = _G.ImprovedForever
       if IF and IF.Menu and IF.Menu.Toggle then Close(); IF.Menu.Toggle() end
@@ -729,15 +808,19 @@ local function SlotButton(parent, row, cross, index, dx, dy)
    ui.row, ui.cross, ui.index, ui.dx, ui.dy = row, cross, index, dx, dy
    ui.cx, ui.cy = 0, 0
    -- (contrast: a dark well with a light rim; the icon inside it)
+   -- (the bronze trim of the enmity / party lists: dark outline, bronze, dark brown well)
+   local outline = ui:CreateTexture(nil, "BACKGROUND", nil, -1); outline:SetPoint("TOPLEFT", -3, 3); outline:SetPoint("BOTTOMRIGHT", 3, -3)
+   outline:SetColorTexture(0.02, 0.016, 0.012, 1)
    local rim = ui:CreateTexture(nil, "BACKGROUND", nil, 0); rim:SetPoint("TOPLEFT", -2, 2); rim:SetPoint("BOTTOMRIGHT", 2, -2)
-   rim:SetColorTexture(0.75, 0.75, 0.8, 0.55)
-   local well = ui:CreateTexture(nil, "BACKGROUND", nil, 1); well:SetAllPoints(); well:SetColorTexture(0.02, 0.02, 0.03, 1)
+   rim:SetColorTexture(1, 1, 1, 1)
+   rim:SetGradient("VERTICAL", CreateColor(0.27, 0.21, 0.13, 1), CreateColor(0.54, 0.46, 0.32, 1))
+   local well = ui:CreateTexture(nil, "BACKGROUND", nil, 1); well:SetAllPoints(); well:SetColorTexture(0.07, 0.055, 0.035, 1)
    ui.empty = ui:CreateTexture(nil, "BORDER"); ui.empty:SetPoint("TOPLEFT", 4, -4); ui.empty:SetPoint("BOTTOMRIGHT", -4, 4)
-   ui.empty:SetColorTexture(1, 1, 1, 0.05)
+   ui.empty:SetColorTexture(0.54, 0.46, 0.32, 0.06)
    ui.icon = ui:CreateTexture(nil, "ARTWORK"); ui.icon:SetPoint("TOPLEFT", 1, -1); ui.icon:SetPoint("BOTTOMRIGHT", -1, 1)
    -- (the pad button, big, on a dark badge in the corner)
    local badge = ui:CreateTexture(nil, "OVERLAY", nil, 1); badge:SetSize(22, 22); badge:SetPoint("BOTTOMRIGHT", 8, -8)
-   badge:SetColorTexture(0, 0, 0, 0.75)
+   badge:SetColorTexture(0.05, 0.035, 0.02, 0.85)
    ui.key = ui:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); ui.key:SetPoint("CENTER", badge, "CENTER", 0, 0)
    ui.key:SetDrawLayer("OVERLAY", 2)
    -- (the cursor: a gold frame round the slot)
@@ -786,10 +869,13 @@ local function Build()
    win:SetScript("OnDragStart", win.StartMoving)
    win:SetScript("OnDragStop", win.StopMovingOrSizing)
    if win.SetBackdrop then
-      win:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-                        edgeSize = 14, insets = { left = 3, right = 3, top = 3, bottom = 3 } })
-      win:SetBackdropColor(0.10, 0.11, 0.15, 0.96)
-      win:SetBackdropBorderColor(0.6, 0.6, 0.7, 1)
+      -- (the game's own dialog: dark background, gold-trimmed border)
+      win:SetBackdrop({ bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",
+                        edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+                        tile = true, tileSize = 32, edgeSize = 26,
+                        insets = { left = 8, right = 8, top = 8, bottom = 8 } })
+      win:SetBackdropColor(1, 1, 1, 1)
+      win:SetBackdropBorderColor(1, 1, 1, 1)
    end
    tinsert(UISpecialFrames, win:GetName())
 
@@ -818,7 +904,10 @@ local function Build()
       ui.text = ui:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); ui.text:SetPoint("LEFT", ui.icon, "RIGHT", 6, 0)
       ui.text:SetWidth(200); ui.text:SetJustifyH("LEFT"); ui.text:SetWordWrap(false)
       ui.sub = ui:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall"); ui.sub:SetPoint("RIGHT", -4, 0)
-      ui.light = ui:CreateTexture(nil, "BACKGROUND"); ui.light:SetAllPoints(); ui.light:SetColorTexture(1, 0.82, 0, 0.25)
+      ui.light = ui:CreateTexture(nil, "BACKGROUND"); ui.light:SetAllPoints()
+      ui.light:SetTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight")
+      ui.light:SetBlendMode("ADD")
+      ui.light:SetVertexColor(1, 0.82, 0.3, 0.9)
       local hl = ui:CreateTexture(nil, "HIGHLIGHT"); hl:SetAllPoints(); hl:SetColorTexture(1, 1, 1, 0.08)
       ui:SetScript("OnClick", function() state.sel = state.top + i - 1; Pick() end)
       ui:SetScript("OnEnter", function() state.sel = state.top + i - 1; if state.mode == "list" then Refresh() end end)
@@ -830,16 +919,49 @@ local function Build()
       rowsUI[i] = ui
    end
 
+   -- the copy confirmation
+   copyPanel = CreateFrame("Frame", nil, win, "BackdropTemplate")
+   copyPanel:SetSize(420, 130)
+   copyPanel:SetPoint("CENTER", win, "CENTER", 0, 0)
+   copyPanel:SetFrameLevel(win:GetFrameLevel() + 20)
+   copyPanel:EnableMouse(true)
+   if copyPanel.SetBackdrop then
+      copyPanel:SetBackdrop({ bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",
+                              edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+                              tile = true, tileSize = 32, edgeSize = 26,
+                              insets = { left = 8, right = 8, top = 8, bottom = 8 } })
+   end
+   copyPanel.text = copyPanel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+   copyPanel.text:SetPoint("TOP", 0, -18)
+   copyPanel.warn = copyPanel:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+   copyPanel.warn:SetPoint("TOP", copyPanel.text, "BOTTOM", 0, -8)
+   copyPanel.warn:SetWidth(380)
+   copyPanel.keys = copyPanel:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+   copyPanel.keys:SetPoint("BOTTOM", 0, 44)
+   local yes = CreateFrame("Button", nil, copyPanel, "UIPanelButtonTemplate")
+   yes:SetSize(110, 22); yes:SetPoint("BOTTOMRIGHT", copyPanel, "BOTTOM", -6, 14); yes:SetText("Copy")
+   yes:SetScript("OnClick", function() CopyDone(true) end)
+   local no = CreateFrame("Button", nil, copyPanel, "UIPanelButtonTemplate")
+   no:SetSize(110, 22); no:SetPoint("BOTTOMLEFT", copyPanel, "BOTTOM", 6, 14); no:SetText("Cancel")
+   no:SetScript("OnClick", function() CopyDone(false) end)
+   copyPanel:Hide()
+   -- (a mouse way in: a small button beside the set's name)
+   local copyButton = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
+   copyButton:SetSize(84, 20)
+   copyButton:SetPoint("LEFT", setText, "RIGHT", 10, 0)
+   copyButton:SetText("Copy set")
+   copyButton:SetScript("OnClick", function() CopyStart() end)
+
    -- step 2: the crossbar
    assign = CreateFrame("Frame", nil, win)
-   assign:SetPoint("TOPLEFT", 16, -64)
+   assign:SetPoint("TOP", win, "TOP", 0, -64)
    assignTitle = win:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
-   assignTitle:SetPoint("TOPLEFT", assign, "TOPLEFT", 0, 26)
+   assignTitle:SetPoint("BOTTOM", assign, "TOP", 0, 6)
    assignTitle:SetParent(assign)
    prompt = assign:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
-   prompt:SetPoint("TOPLEFT", assign, "TOPLEFT", 0, -50)
+   prompt:SetPoint("TOP", assign, "TOP", 0, -50)
    prompt:SetWidth(480)
-   prompt:SetJustifyH("LEFT")
+   prompt:SetJustifyH("CENTER")
    prompt:SetSpacing(8)
    viewText = assign:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
    viewText:SetPoint("TOPRIGHT", win, "TOPRIGHT", -36, -40)
@@ -875,6 +997,8 @@ local function Build()
       Load(); Refresh()
    end)
    win:SetScript("OnHide", function(self)
+      state.copy = nil
+      CopyRefresh()
       self:EnableGamePadButton(false)
       if self.EnableGamePadStick then self:EnableGamePadStick(false) end
       state.picked = nil
