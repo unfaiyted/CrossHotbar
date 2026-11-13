@@ -19,8 +19,9 @@ local ADDON, addon = ...
 
 local MAX_ROWS = 8
 local ROW_W = 170
-local ROW_H = 16          -- (name line + thin bar)
-local BAR_H = 3
+local ROW_H = 18          -- (name line + thin bar)
+local BAR_H = 4
+local GOLD = { 1, 0.82, 0.25 }          -- (the default UI's gold trim)
 
 local E = {}
 addon.Enmity = E
@@ -89,23 +90,45 @@ for i = 1, MAX_ROWS do
    local r = CreateFrame("Frame", nil, frame)
    r:SetSize(ROW_W, ROW_H)
    r:SetPoint("TOPLEFT", 0, -(i - 1) * (ROW_H + 3))
-   -- (the aggro marker: a small diamond)
-   r.marker = r:CreateTexture(nil, "ARTWORK")
-   r.marker:SetSize(8, 8)
-   r.marker:SetPoint("TOPLEFT", 1, -2)
+   -- (the aggro marker: a coloured diamond set in a gold one, a dark ring between)
+   r.markerGold = r:CreateTexture(nil, "ARTWORK", nil, 1)
+   r.markerGold:SetSize(11, 11)
+   r.markerGold:SetPoint("CENTER", r, "TOPLEFT", 5, -6)
+   r.markerGold:SetTexture("Interface\\Buttons\\WHITE8x8")
+   r.markerGold:SetVertexColor(GOLD[1], GOLD[2], GOLD[3], 1)
+   r.markerGold:SetRotation(math.rad(45))
+   r.markerRing = r:CreateTexture(nil, "ARTWORK", nil, 2)
+   r.markerRing:SetSize(9, 9)
+   r.markerRing:SetPoint("CENTER", r.markerGold)
+   r.markerRing:SetTexture("Interface\\Buttons\\WHITE8x8")
+   r.markerRing:SetVertexColor(0.1, 0.07, 0.02, 1)
+   r.markerRing:SetRotation(math.rad(45))
+   r.marker = r:CreateTexture(nil, "ARTWORK", nil, 3)
+   r.marker:SetSize(7, 7)
+   r.marker:SetPoint("CENTER", r.markerGold)
    r.marker:SetTexture("Interface\\Buttons\\WHITE8x8")
    r.marker:SetRotation(math.rad(45))
    r.name = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-   r.name:SetPoint("TOPLEFT", 14, 0)
+   r.name:SetPoint("TOPLEFT", 14, 1)
    r.name:SetPoint("RIGHT", 0, 0)
    r.name:SetJustifyH("LEFT")
    r.name:SetWordWrap(false)
    r.name:SetShadowOffset(1, -1)
    r.name:SetShadowColor(0, 0, 0, 1)
+   -- (the health bar in a 1px gold frame)
+   r.trim = CreateFrame("Frame", nil, r, "BackdropTemplate")
+   r.trim:SetPoint("BOTTOMLEFT", 13, -1)
+   r.trim:SetPoint("BOTTOMRIGHT", 1, -1)
+   r.trim:SetHeight(BAR_H + 2)
+   if r.trim.SetBackdrop then
+      r.trim:SetBackdrop({ edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
+      r.trim:SetBackdropBorderColor(GOLD[1], GOLD[2], GOLD[3], 0.95)
+   end
    r.bar = CreateFrame("StatusBar", nil, r)
    r.bar:SetPoint("BOTTOMLEFT", 14, 0)
    r.bar:SetPoint("BOTTOMRIGHT", 0, 0)
    r.bar:SetHeight(BAR_H)
+   r.bar:SetFrameLevel(r.trim:GetFrameLevel() + 1)
    r.bar:SetStatusBarTexture("Interface\\Buttons\\WHITE8x8")
    r.bar:SetStatusBarColor(0.85, 0.2, 0.15, 1)
    local bg = r.bar:CreateTexture(nil, "BACKGROUND"); bg:SetAllPoints(); bg:SetColorTexture(0, 0, 0, 0.55)
