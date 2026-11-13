@@ -197,6 +197,21 @@ local function TargetButton(name, step)
          end
       end
       if count == 0 then
+         -- (diagnostics: what each check gives for the first nameplates)
+         for i = 1, 4 do
+            local u = "nameplate" .. i
+            local ex = UnitExists(u)
+            local p1 = SecureCmdOptionParse("[@" .. u .. ",exists] 1") or "nil"
+            local p2 = SecureCmdOptionParse("[@" .. u .. ",harm] 1") or "nil"
+            local p3 = SecureCmdOptionParse("[@" .. u .. ",harm,nodead] 1") or "nil"
+            self:CallMethod("EnmityLog", "diag " .. u .. " exists=" .. (ex and "y" or "n")
+               .. " [exists]=" .. p1 .. " [harm]=" .. p2 .. " [harm,nodead]=" .. p3)
+            if ex then
+               local onMe = UnitIsUnit(u .. "target", "player")
+               self:CallMethod("EnmityLog", "diag " .. u .. " targets me=" .. (onMe and "y" or "n")
+                  .. " target exists=" .. (UnitExists(u .. "target") and "y" or "n"))
+            end
+         end
          self:CallMethod("EnmityLog", "press: list empty")
          return false
       end
