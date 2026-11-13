@@ -47,7 +47,9 @@ local S = 40          -- (slot size)
 
 local win, tabText, setText, legend, carry
 local rowsUI, slotsUI = {}, {}
-local state = { tab = 1, sel = 1, top = 1, mode = "list", cursor = 1, picked = nil, held = {}, set = 1, view = 1, stickY = 0, stickX = 0 }
+local state = { tab = 1, sel = 1, top = 1, mode = "list", cursor = 1, picked = nil, held = {}, lastUp = {}, set = 1, view = 1,
+                stickY = 0, stickX = 0, expanded = false, needRelease = false, displaced = false, dragging = false }
+local DOUBLE_TAP = 0.35
 local entries = {}
 
 local function Log(msg)
@@ -205,6 +207,8 @@ end
 local function Load()
    local ok, result = pcall(({ SpellEntries, ItemEntries, MacroEntries })[state.tab])
    if not ok then Log("list error: " .. tostring(result)); result = {} end
+   table.insert(result, 1, { kind = "empty", name = "Empty a slot", icon = "Interface\\Buttons\\UI-GroupLoot-Pass-Up",
+                             group = "" })
    entries = result
    state.sel = math.max(1, math.min(state.sel, #entries))
 end
@@ -226,22 +230,46 @@ end
 
 local Refresh
 
+-- What's on the cursor, as a list entry (an action PlaceAction pushed out)
+local function CursorEntry()
+   local kind, a, b, c = GetCursorInfo()
+   if kind == "spell" then
+      local id = c or b
+      local name = (C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(id)) or (GetSpellInfo and GetSpellInfo(id))
+      local icon = (C_Spell and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(id)) or (GetSpellTexture and GetSpellTexture(id))
+      return { kind = "spell", id = id, name = name or ("spell " .. tostring(id)), icon = icon }
+   elseif kind == "item" then
+      local name = (C_Item and C_Item.GetItemNameByID and C_Item.GetItemNameByID(a)) or (GetItemInfo and GetItemInfo(a))
+      local icon = (C_Item and C_Item.GetItemIconByID and C_Item.GetItemIconByID(a)) or (GetItemIcon and GetItemIcon(a))
+      return { kind = "item", id = a, name = name or ("item " .. tostring(a)), icon = icon }
+   elseif kind == "macro" then
+      local name, icon = GetMacroInfo(a)
+      return name and { kind = "macro", id = a, name = name, icon = icon } or nil
+   end
+end
+
+local Empty
+
+-- Puts the entry on the slot; returns what was there before (pushed out), if anything
 local function Place(entry, set, row, index)
    if InCombatLockdown() then Say("can't change bars in combat.") return end
+   if entry and entry.kind == "empty" then Empty(set, row, index) return end
    local slot = ActionSlot(set, row, index)
    if not (entry and slot) then return end
    ClearCursor()
    local ok, err = pcall(Pickup, entry)
    if ok and GetCursorInfo() then ok, err = pcall(PlaceAction, slot) end
+   local displaced = ok and CursorEntry() or nil
    ClearCursor()
    Log(("place %s %s -> set %d %s #%d (action %d)%s"):format(entry.kind, tostring(entry.id), set,
       ROWS[row].label, index, slot, ok and "" or (" FAILED " .. tostring(err))))
    if not ok then Say("couldn't place it: " .. tostring(err)) end
    PlaySound(SOUNDKIT and SOUNDKIT.IG_ABILITY_ICON_DROP or 838)
    Refresh()
+   return displaced
 end
 
-local function Empty(set, row, index)
+Empty = function(set, row, index)
    if InCombatLockdown() then Say("can't change bars in combat.") return end
    local slot = ActionSlot(set, row, index)
    if not slot then return end
@@ -257,8 +285,11 @@ local function DropOn(set, row, index)
    local slot = ActionSlot(set, row, index)
    if slot and GetCursorInfo() then
       pcall(PlaceAction, slot)
+      local displaced = CursorEntry()
+      ClearCursor()
       Log(("drop -> set %d %s #%d (action %d)"):format(set, ROWS[row].label, index, slot))
       Refresh()
+      return displaced
    end
 end
 
@@ -283,7 +314,7 @@ local function ShowTip()
       end
    else
       local s = slotsUI[state.cursor]
-      local slot = s and ActionSlot(state.set, s.row, s.index)
+      local slot = s and s.visible and ActionSlot(state.set, s.row, s.index)
       if slot and HasAction(slot) then GameTooltip:SetAction(slot); shown = true end
    end
    if shown then GameTooltip:Show() else GameTooltip:Hide() end
@@ -301,8 +332,8 @@ end
 local VIEWS = {
    { row = 1, crosses = { 1, 2, 3 } },
    { row = 2, crosses = { 1, 2, 3 } },
-   { row = 3, crosses = { 1, 2, 3 } },
-   { row = 4, crosses = { 1, 2, 3 } },
+   { row = 3, crosses = { 1, 2 } },   -- (the WXHB bars have no expanded slots)
+   { row = 4, crosses = { 1, 2 } },
 }
 local LIST_W = 340
 local SLOT_GAP = 6
@@ -317,15 +348,14 @@ local function LegendText()
          Glyph("PADDUP") .. Glyph("PADDDOWN") .. " choose",
          Glyph("PADDLEFT") .. Glyph("PADDRIGHT") .. " category",
          Glyph("PAD1") .. " take",
+         Glyph("PADFORWARD") .. " Improved Forever",
          Glyph("PAD2") .. " close",
       }
    else
       parts = {
-         "hold " .. Glyph("PADLTRIGGER") .. " / " .. Glyph("PADRTRIGGER") .. ", press a button: put it there",
-         Glyph("PAD4") .. " bar",
+         "hold " .. Glyph("PADLTRIGGER") .. " / " .. Glyph("PADRTRIGGER") .. " + button: put it there",
          Glyph("PADLSHOULDER") .. Glyph("PADRSHOULDER") .. " set",
-         Glyph("PAD3") .. " empty",
-         Glyph("PAD2") .. " back",
+         Glyph("PAD2") .. (state.displaced and " drop it" or " back"),
       }
    end
    return table.concat(parts, "    ")
@@ -343,17 +373,37 @@ local function CurrentView()
    return TriggerRow() or state.view
 end
 
+-- The bar and crosses to draw: the trigger(s) held (a double tap and hold:
+-- the expanded cross), or, dragging with the mouse, the bar Y picked; else none
+local function Shown()
+   local row = TriggerRow()
+   if row then
+      if state.expanded and row <= 2 then return row, { 3 } end
+      return row, { 1, 2 }
+   end
+   if state.dragging then return VIEWS[state.view].row, VIEWS[state.view].crosses end
+end
+
 -- Places the slots of the view shown; hides the rest
-local assign, assignTitle, viewText, halfLabels, crossLabels = nil, nil, nil, {}, {}
+local assign, assignTitle, viewText, prompt, halfLabels, crossLabels = nil, nil, nil, nil, {}, {}
 local function Layout()
-   local view = VIEWS[CurrentView()]
+   local row, crosses = Shown()
    for _, s in ipairs(slotsUI) do s.visible = false end
+   for _, label in pairs(crossLabels) do label:Hide() end
+   halfLabels[2]:Hide()
+   if not row then
+      halfLabels[1]:Hide()
+      for _, s in ipairs(slotsUI) do s:Hide() end
+      assign:SetSize(480, 36 + CROSS_W + 20)
+      return 480
+   end
    halfLabels[1]:ClearAllPoints()
    halfLabels[1]:SetPoint("BOTTOMLEFT", assign, "TOPLEFT", 0, -26)
-   halfLabels[1]:SetText(ROWS[view.row].label)
-   halfLabels[2]:Hide()
+   halfLabels[1]:SetText(ROWS[row].label .. ((state.expanded and row <= 2 and TriggerRow()) and "  expanded" or ""))
+   halfLabels[1]:Show()
+   local view = { row = row }
    local x = 0
-   for _, c in ipairs(view.crosses) do
+   for _, c in ipairs(crosses) do
       local cx, cy = x + CROSS_W / 2, -36 - CROSS_W / 2
       for _, s in ipairs(slotsUI) do
          if s.row == view.row and s.cross == c then
@@ -370,6 +420,7 @@ local function Layout()
       crossLabels[c]:ClearAllPoints()
       crossLabels[c]:SetPoint("TOP", assign, "TOPLEFT", cx, cy - CROSS_W / 2 - 2)
       crossLabels[c]:SetText(CROSSES[c].name)
+      crossLabels[c]:Show()
       x = x + CROSS_W + (c == 2 and 30 or 12)
    end
    for _, s in ipairs(slotsUI) do s:SetShown(s.visible) end
@@ -418,13 +469,22 @@ Refresh = function()
    else
       width = Layout()
       local p = state.picked
-      assignTitle:SetText(p and ("|T" .. tostring(p.icon) .. ":20|t  " .. p.name) or "Drop it on a slot")
-      local names = {}
-      for v, view in ipairs(VIEWS) do
-         local label = ROWS[view.row].label
-         names[v] = (v == CurrentView()) and ("|cffffd100" .. label .. "|r") or ("|cff777777" .. label .. "|r")
+      local title = p and ("|T" .. tostring(p.icon) .. ":20|t  " .. p.name) or "Drop it on a slot"
+      if state.displaced and p then title = title .. "   |cffff9933(pushed out: put it somewhere, or " .. Glyph("PAD2", 14) .. " to drop it)|r" end
+      assignTitle:SetText(title)
+      if state.dragging then
+         local names = {}
+         for v, view in ipairs(VIEWS) do
+            local label = ROWS[view.row].label
+            names[v] = (v == state.view) and ("|cffffd100" .. label .. "|r") or ("|cff777777" .. label .. "|r")
+         end
+         viewText:SetText(Glyph("PAD4", 14) .. "  " .. table.concat(names, "  "))
+      else
+         viewText:SetText("")
       end
-      viewText:SetText(Glyph("PAD4", 14) .. "  " .. table.concat(names, "  "))
+      prompt:SetShown(Shown() == nil)
+      prompt:SetText("Hold " .. Glyph("PADLTRIGGER", 22) .. " or " .. Glyph("PADRTRIGGER", 22) .. " to show that bar, then press the button.\n"
+         .. "|cffaaaaaaBoth (one then the other): the WXHB bars.   Tap twice and hold: the expanded slots.|r")
       local lit = nil
       local keys = SlotKeys()
       if not (slotsUI[state.cursor] and slotsUI[state.cursor].visible) then
@@ -492,7 +552,8 @@ local function Close()
 end
 
 local function Back()
-   state.picked = nil
+   if state.displaced and state.picked then Say("dropped " .. tostring(state.picked.name) .. ".") end
+   state.picked, state.displaced, state.dragging = nil, false, false
    SetMode("list")
    ClearCursor()
    Refresh()
@@ -514,48 +575,62 @@ local function CursorTo(row, index)
    end
 end
 
--- Placed: back to the list for the next one (the bar stays shown a moment)
-local function Placed()
-   C_Timer.After(0.35, function()
-      if win and win:IsShown() and state.mode == "slot" and not TriggerRow() then Back() end
-   end)
+-- Placed: back to the list; or, if it pushed something out, that's picked next
+-- (the trigger let go first, so the same press doesn't put it straight back)
+local function Placed(displaced)
+   if displaced then
+      state.picked, state.displaced, state.dragging = displaced, true, false
+      state.needRelease = TriggerRow() ~= nil
+      Refresh()
+   else
+      local wasDisplaced = state.displaced
+      state.displaced = false
+      if wasDisplaced then state.picked = nil end
+      Back()
+   end
 end
 
 local function OnPad(_, key)
-   if key == "PADLTRIGGER" then state.held.L = GetTime(); Refresh() return end
-   if key == "PADRTRIGGER" then state.held.R = GetTime(); Refresh() return end
+   if key == "PADLTRIGGER" or key == "PADRTRIGGER" then
+      local side = key == "PADLTRIGGER" and "L" or "R"
+      local now = GetTime()
+      -- (tapped, then pressed again quickly and held: the expanded slots)
+      if state.lastUp[side] and now - state.lastUp[side] <= DOUBLE_TAP and not (state.held.L or state.held.R) then
+         state.expanded = true
+      end
+      state.held[side] = now
+      Refresh()
+      return
+   end
    if key == "PADLSHOULDER" then ChangeSet(-1) return end
    if key == "PADRSHOULDER" then ChangeSet(1) return end
    if state.mode == "slot" then
       local row = TriggerRow()
       if row then
-         -- hold the trigger(s), press the slot's button
+         if state.needRelease then return end
          local keys = SlotKeys()
-         for index = 1, 8 do
+         local first, last = 1, 8
+         if state.expanded and row <= 2 then first, last = 9, 12 end
+         for index = first, last do
             if keys[index] == key then
                CursorTo(row, index)
-               if state.picked then Place(state.picked, state.set, row, index); Placed() end
+               if state.picked then
+                  Placed(Place(state.picked, state.set, row, index))
+               end
                return
             end
          end
          return
       end
       if key == "PAD2" then Back()
-      elseif key == "PAD4" then state.view = state.view % #VIEWS + 1; Refresh()
-      elseif key == "PADDDOWN" then MoveCursor(0, -1)
-      elseif key == "PADDUP" then MoveCursor(0, 1)
-      elseif key == "PADDRIGHT" then MoveCursor(1, 0)
-      elseif key == "PADDLEFT" then MoveCursor(-1, 0)
-      elseif key == "PAD1" then
-         local s = slotsUI[state.cursor]
-         if s and state.picked then Place(state.picked, state.set, s.row, s.index); Placed() end
-      elseif key == "PAD3" then
-         local s = slotsUI[state.cursor]
-         if s then Empty(state.set, s.row, s.index) end
+      elseif key == "PAD4" and state.dragging then state.view = state.view % #VIEWS + 1; Refresh()
       end
       return
    end
    if key == "PAD2" then Close()
+   elseif key == "PADFORWARD" then
+      local IF = _G.ImprovedForever
+      if IF and IF.Menu and IF.Menu.Toggle then Close(); IF.Menu.Toggle() end
    elseif key == "PADDDOWN" then MoveList(1)
    elseif key == "PADDUP" then MoveList(-1)
    elseif key == "PADDRIGHT" or key == "PADDLEFT" then
@@ -567,8 +642,15 @@ local function OnPad(_, key)
 end
 
 local function OnPadUp(_, key)
-   if key == "PADLTRIGGER" then state.held.L = nil; Refresh() end
-   if key == "PADRTRIGGER" then state.held.R = nil; Refresh() end
+   if key == "PADLTRIGGER" or key == "PADRTRIGGER" then
+      local side = key == "PADLTRIGGER" and "L" or "R"
+      state.held[side] = nil
+      state.lastUp[side] = GetTime()
+      if not (state.held.L or state.held.R) then
+         state.expanded, state.needRelease = false, false
+      end
+      Refresh()
+   end
 end
 
 -- The left stick: held past half way, it moves, then repeats
@@ -596,9 +678,6 @@ local function StickTick(_, elapsed)
    end
    if state.mode == "list" then
       if dir == "up" then MoveList(-1) elseif dir == "down" then MoveList(1) end
-   else
-      if dir == "up" then MoveCursor(0, 1) elseif dir == "down" then MoveCursor(0, -1)
-      elseif dir == "left" then MoveCursor(-1, 0) else MoveCursor(1, 0) end
    end
 end
 
@@ -636,11 +715,11 @@ local function SlotButton(parent, row, cross, index, dx, dy)
    ui:SetScript("OnClick", function(_, button)
       CursorTo(row, index)
       if button == "RightButton" then Empty(state.set, row, index)
-      elseif GetCursorInfo() then DropOn(state.set, row, index); Placed()
-      elseif state.picked then Place(state.picked, state.set, row, index); Placed()
+      elseif GetCursorInfo() then Placed(DropOn(state.set, row, index))
+      elseif state.picked then Placed(Place(state.picked, state.set, row, index))
       else Refresh() end
    end)
-   ui:SetScript("OnReceiveDrag", function() DropOn(state.set, row, index); Placed() end)
+   ui:SetScript("OnReceiveDrag", function() Placed(DropOn(state.set, row, index)) end)
    ui:SetScript("OnDragStart", function()
       local slot = ActionSlot(state.set, row, index)
       if slot and not InCombatLockdown() then PickupAction(slot); Refresh() end
@@ -718,6 +797,11 @@ local function Build()
    assignTitle = win:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
    assignTitle:SetPoint("TOPLEFT", assign, "TOPLEFT", 0, 26)
    assignTitle:SetParent(assign)
+   prompt = assign:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
+   prompt:SetPoint("TOPLEFT", assign, "TOPLEFT", 0, -50)
+   prompt:SetWidth(480)
+   prompt:SetJustifyH("LEFT")
+   prompt:SetSpacing(8)
    viewText = assign:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
    viewText:SetPoint("TOPRIGHT", win, "TOPRIGHT", -36, -40)
    for h = 1, 2 do
@@ -801,7 +885,7 @@ local function Build()
          if texture then
             carry.icon:SetTexture(texture); carry:Show()
             -- (dragging something: show the bar to drop it on)
-            if state.mode == "list" then state.picked = nil; state.view = 1; SetMode("slot"); Refresh() end
+            if state.mode == "list" then state.picked = nil; state.view = 1; state.dragging = true; SetMode("slot"); Refresh() end
          else
             carry:Hide()
          end

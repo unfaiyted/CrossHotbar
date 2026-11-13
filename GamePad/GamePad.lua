@@ -222,7 +222,7 @@ function GamePadMixin:ConfigActions()
       if button == "FACER" then
          self.SpellTargetCancelButton = attributes.BIND
       end
-      if self.Actions[attributes.ACTION] then
+      if self.Actions[attributes.ACTION] or (addon.IsClickAction and addon:IsClickAction(attributes.ACTION)) then
          SetOverrideBinding(self, true, attributes.BIND, attributes.ACTION)
       elseif self.Modifiers[attributes.ACTION] then
          if attributes.ACTION == "LEFTHOTBAR" then

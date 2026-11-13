@@ -15,5 +15,6 @@ GroupNavigator/GroupNavigator.xml
 GamePad/GamePad.xml
 ConfigUI/ConfigUI.xml
 
+Forever\API.lua
 Forever\ForeverFocus.lua
 Forever\Editor.lua
