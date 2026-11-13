@@ -331,10 +331,9 @@ local function GameFrames(hide)
             Fade(member, hide)
             Fade(member.selectionHighlight, hide)
             Fade(member.aggroHighlight, hide)
-            for _, region in ipairs({ member:GetRegions() }) do
-               local ok, ignores = pcall(region.IsIgnoringParentAlpha, region)
-               if ok and ignores == true then Fade(region, hide) end
-            end
+            -- (every region of theirs: the frame is hidden anyway, and whether a
+            -- region ignores its parent's alpha comes back secret)
+            for _, region in ipairs({ member:GetRegions() }) do Fade(region, hide) end
          end
       end
    end
