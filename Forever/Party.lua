@@ -199,6 +199,8 @@ for i, unit in ipairs(UNITS) do
    b.bracket = CreateFrame("Frame", nil, b)
    b.bracket:SetAllPoints()
    for _, c in ipairs({ { "TOPLEFT", -2, 2, 10, 2 }, { "TOPLEFT", -2, 2, 2, 10 },
+                        { "TOPRIGHT", 2, 2, 10, 2 }, { "TOPRIGHT", 2, 2, 2, 10 },
+                        { "BOTTOMLEFT", -2, -2, 10, 2 }, { "BOTTOMLEFT", -2, -2, 2, 10 },
                         { "BOTTOMRIGHT", 2, -2, 10, 2 }, { "BOTTOMRIGHT", 2, -2, 2, 10 } }) do
       local t = b.bracket:CreateTexture(nil, "OVERLAY")
       t:SetColorTexture(1, 0.82, 0.3, 1)
