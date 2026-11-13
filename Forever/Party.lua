@@ -1,24 +1,32 @@
--- Party list: a clean replacement for the game's party frames, in the
--- enmity list's style (bronze trim, thin bars), that keeps the controller's
--- party navigation (CrossHotbar's GroupNavigator, D-pad up / down) working.
+-- Party list: a replacement for the game's party frames, laid out as FFXIV's
+-- party list, drawn in WoW's colours and bronze trim; the controller's party
+-- navigation (CrossHotbar's GroupNavigator, D-pad up / down) moves through it.
 --
---   one row per member (you first, then party1-4): a class-coloured name, the
---   leader's crown, a health bar in a bronze trim, a thin power bar; dead /
---   ghost / offline in place of the health; faded when out of range; a gold
---   rim on your target, a red rim when something's attacking them.
---   Each row is a secure unit button (CHBPartyUnitButton1-5): left click
---   targets, right click opens the unit's menu, and GroupNavigator finds
---   them by that name (GroupNavigator.lua's party prefixes), so D-pad up /
---   down move through them and its highlight sits on them.
--- The game's party frames are faded out (an alpha animation of ours aimed at
--- them, as Improved Forever's Focus.Fade: their own properties untouched, so
--- nothing of the game's is tainted).
+--   (class)  ① Lv60  Name                              [buffs...]
+--            [===== health (green) =====]  [== power ==]
+--             22307                          10416
+--
+--   the class icon round, in a bronze ring; the party slot in a small badge;
+--   level in gold, the name white; health green, power in its colour (mana
+--   blue, rage red, energy yellow), both in a rounded bronze trim, their
+--   values under them; buffs on the right (when the game lets them be read).
+--   Your target: a gold corner bracket (as FFXIV's); attacked: a red edge.
+--   Dead / ghost / offline replace the values; out of range: faded.
+-- Each row is a secure unit button (CHBPartyUnitButton1-5): left click
+-- targets, right click opens the unit's menu. GroupNavigator, with this list
+-- on, navigates only these rows (GroupNavigator.lua). The game's party frames
+-- are faded out (an alpha animation of ours aimed at them, as Improved
+-- Forever's Focus.Fade: nothing of the game's is tainted).
 -- /xhb party  on / off;  /xhb party lock  locks / unlocks (unlocked: drag it).
 local ADDON, addon = ...
 
-local ROW_W, ROW_H = 180, 30
-local GAP = 4
 local UNITS = { "player", "party1", "party2", "party3", "party4" }
+local ICON = 28
+local HP_W, PW_W, BAR_H = 140, 64, 6
+local ROW_W = ICON + 8 + HP_W + 6 + PW_W + 8 + 5 * 17
+local ROW_H = 36
+local GAP = 4
+local MAX_BUFFS = 5
 
 local P = {}
 addon.Party = P
@@ -30,6 +38,11 @@ local function Settings()
    return s
 end
 
+function P.Active()
+   local s = Settings()
+   return s and s.party and true or false
+end
+
 local function Secret(v) return issecretvalue ~= nil and issecretvalue(v) end
 local function Plain(v)
    if Secret(v) then return false end
@@ -37,7 +50,7 @@ local function Plain(v)
 end
 
 ---------------------------------------------------------------------------
--- Style (as the enmity list's)
+-- Style: the bronze trim (as the enmity list's), rounded at the corners
 ---------------------------------------------------------------------------
 local BRASS_LIGHT, BRASS_DARK = { 0.54, 0.46, 0.32, 1 }, { 0.27, 0.21, 0.13, 1 }
 local BEVEL = {
@@ -71,17 +84,21 @@ local function Bevel(box)
    return #BEVEL
 end
 
--- A 2px rim round a row (target: gold; under attack: red)
-local function Rim(parent, r, g, b)
-   local rim = CreateFrame("Frame", nil, parent, "BackdropTemplate")
-   rim:SetPoint("TOPLEFT", -2, 2); rim:SetPoint("BOTTOMRIGHT", 2, -2)
-   if rim.SetBackdrop then
-      rim:SetBackdrop({ edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 2 })
-      rim:SetBackdropBorderColor(r, g, b, 0.9)
-   end
-   rim:Hide()
-   return rim
+-- A trimmed bar: its trim frame, and the StatusBar inside
+local function Bar(parent, width, colour)
+   local box = CreateFrame("Frame", nil, parent)
+   box:SetSize(width, BAR_H + 6)
+   local inset = Bevel(box)
+   local bar = CreateFrame("StatusBar", nil, box)
+   bar:SetPoint("TOPLEFT", inset, -inset)
+   bar:SetPoint("BOTTOMRIGHT", -inset, inset)
+   bar:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
+   bar:SetStatusBarColor(colour[1], colour[2], colour[3], 1)
+   local bg = bar:CreateTexture(nil, "BACKGROUND"); bg:SetAllPoints(); bg:SetColorTexture(0.137, 0.11, 0.075, 1)
+   return box, bar
 end
+
+local HEALTH = { 0.15, 0.75, 0.15 }
 
 ---------------------------------------------------------------------------
 -- The rows
@@ -106,79 +123,144 @@ for i, unit in ipairs(UNITS) do
    b:SetAttribute("type1", "target")
    b:SetAttribute("type2", "togglemenu")
    b:RegisterForClicks("AnyUp")
-   b.unit = unit
+   b.unit, b.slot = unit, i
    if unit ~= "player" then RegisterUnitWatch(b) end
 
-   b.name = b:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-   b.name:SetPoint("TOPLEFT", 2, 0)
-   b.name:SetPoint("RIGHT", -24, 0)
+   -- (the class icon: the game's round one, in a bronze ring)
+   local ring = b:CreateTexture(nil, "BACKGROUND", nil, 1)
+   ring:SetSize(ICON + 4, ICON + 4)
+   ring:SetPoint("LEFT", 0, 0)
+   ring:SetTexture("Interface\\CHARACTERFRAME\\TempPortraitAlphaMask")
+   ring:SetVertexColor(BRASS_LIGHT[1], BRASS_LIGHT[2], BRASS_LIGHT[3], 1)
+   local well = b:CreateTexture(nil, "BACKGROUND", nil, 2)
+   well:SetSize(ICON + 1, ICON + 1)
+   well:SetPoint("CENTER", ring)
+   well:SetTexture("Interface\\CHARACTERFRAME\\TempPortraitAlphaMask")
+   well:SetVertexColor(0.05, 0.04, 0.02, 1)
+   b.class = b:CreateTexture(nil, "ARTWORK")
+   b.class:SetSize(ICON - 2, ICON - 2)
+   b.class:SetPoint("CENTER", ring)
+   b.class:SetTexture("Interface\\TargetingFrame\\UI-Classes-Circles")
+
+   local x = ICON + 8
+   -- (the slot badge, level, name)
+   b.badge = b:CreateTexture(nil, "ARTWORK")
+   b.badge:SetSize(12, 12)
+   b.badge:SetPoint("TOPLEFT", x, -1)
+   b.badge:SetTexture("Interface\\CHARACTERFRAME\\TempPortraitAlphaMask")
+   b.badge:SetVertexColor(BRASS_DARK[1], BRASS_DARK[2], BRASS_DARK[3], 1)
+   b.slotText = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+   b.slotText:SetPoint("CENTER", b.badge, "CENTER", 0, 0)
+   b.slotText:SetText(i)
+   b.level = b:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+   b.level:SetPoint("LEFT", b.badge, "RIGHT", 4, 0)
+   b.name = b:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+   b.name:SetPoint("LEFT", b.level, "RIGHT", 4, 0)
+   b.name:SetWidth(HP_W + PW_W - 40)
    b.name:SetJustifyH("LEFT")
    b.name:SetWordWrap(false)
    b.name:SetShadowOffset(1, -1); b.name:SetShadowColor(0, 0, 0, 1)
+
+   -- (health and power side by side, values under them)
+   b.hpBox, b.hp = Bar(b, HP_W, HEALTH)
+   b.hpBox:SetPoint("TOPLEFT", x - 1, -15)
+   b.pwBox, b.pw = Bar(b, PW_W, { 0.2, 0.4, 1 })
+   b.pwBox:SetPoint("LEFT", b.hpBox, "RIGHT", 6, 0)
+   b.hpText = b:CreateFontString(nil, "OVERLAY", "NumberFontNormalSmall")
+   b.hpText:SetPoint("TOPLEFT", b.hpBox, "BOTTOMLEFT", 2, 0)
+   b.pwText = b:CreateFontString(nil, "OVERLAY", "NumberFontNormalSmall")
+   b.pwText:SetPoint("TOPLEFT", b.pwBox, "BOTTOMLEFT", 2, 0)
    b.state = b:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-   b.state:SetPoint("TOPRIGHT", -2, 0)
-   b.leader = b:CreateTexture(nil, "OVERLAY")
-   b.leader:SetSize(12, 12)
-   b.leader:SetPoint("RIGHT", b.state, "LEFT", -2, 0)
-   b.leader:SetTexture("Interface\\GroupFrame\\UI-Group-LeaderIcon")
-   b.leader:Hide()
+   b.state:SetPoint("TOPLEFT", b.hpBox, "BOTTOMLEFT", 2, 0)
 
-   local box = CreateFrame("Frame", nil, b)
-   box:SetPoint("BOTTOMLEFT", 0, 0)
-   box:SetPoint("BOTTOMRIGHT", 0, 0)
-   box:SetHeight(6 + 8)
-   local inset = Bevel(box)
-   b.hp = CreateFrame("StatusBar", nil, box)
-   b.hp:SetPoint("TOPLEFT", inset, -inset)
-   b.hp:SetPoint("BOTTOMRIGHT", -inset, inset + 3)
-   b.hp:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
-   local hbg = b.hp:CreateTexture(nil, "BACKGROUND"); hbg:SetAllPoints(); hbg:SetColorTexture(0.137, 0.11, 0.075, 1)
-   b.pw = CreateFrame("StatusBar", nil, box)
-   b.pw:SetPoint("TOPLEFT", b.hp, "BOTTOMLEFT", 0, -1)
-   b.pw:SetPoint("BOTTOMRIGHT", -inset, inset)
-   b.pw:SetStatusBarTexture("Interface\\Buttons\\WHITE8x8")
-   local pbg = b.pw:CreateTexture(nil, "BACKGROUND"); pbg:SetAllPoints(); pbg:SetColorTexture(0.05, 0.04, 0.03, 1)
+   -- (buffs on the right)
+   b.buffs = {}
+   for k = 1, MAX_BUFFS do
+      local t = b:CreateTexture(nil, "ARTWORK")
+      t:SetSize(15, 15)
+      t:SetPoint("LEFT", b.pwBox, "RIGHT", 8 + (k - 1) * 17, 4)
+      t:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+      t:Hide()
+      b.buffs[k] = t
+   end
 
-   b.targetRim = Rim(b, 1, 0.82, 0.3)
-   b.aggroRim = Rim(b, 0.9, 0.15, 0.1)
+   -- (your target: a gold corner bracket, as FFXIV's; attacked: a red edge)
+   b.bracket = CreateFrame("Frame", nil, b)
+   b.bracket:SetAllPoints()
+   for _, c in ipairs({ { "TOPLEFT", 1, 1, 10, 2 }, { "TOPLEFT", 1, 1, 2, 10 },
+                        { "BOTTOMRIGHT", -1, -1, 10, 2 }, { "BOTTOMRIGHT", -1, -1, 2, 10 } }) do
+      local t = b.bracket:CreateTexture(nil, "OVERLAY")
+      t:SetColorTexture(1, 0.82, 0.3, 1)
+      t:SetSize(c[4], c[5])
+      t:SetPoint(c[1], b, c[1], (c[2] < 0) and 2 or -2, (c[3] < 0) and -2 or 2)
+   end
+   b.bracket:Hide()
+   b.aggro = b:CreateTexture(nil, "OVERLAY")
+   b.aggro:SetColorTexture(0.9, 0.15, 0.1, 1)
+   b.aggro:SetSize(2, ROW_H - 6)
+   b.aggro:SetPoint("RIGHT", b, "LEFT", -2, 0)
+   b.aggro:Hide()
    rows[i] = b
+end
+
+---------------------------------------------------------------------------
+-- Updating a row
+---------------------------------------------------------------------------
+local function Buffs(b, unit)
+   local n = 0
+   if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
+      for k = 1, 40 do
+         if n >= MAX_BUFFS then break end
+         local ok, aura = pcall(C_UnitAuras.GetAuraDataByIndex, unit, k, "HELPFUL")
+         if not (ok and aura) then break end
+         n = n + 1
+         b.buffs[n]:SetTexture(aura.icon)
+         b.buffs[n]:Show()
+      end
+   end
+   for k = n + 1, MAX_BUFFS do b.buffs[k]:Hide() end
 end
 
 local function Update(b)
    local unit = b.unit
    if not UnitExists(unit) then return end
-   local name = UnitName(unit)
-   b.name:SetText(name or "?")
    local _, class = UnitClass(unit)
-   local cc = class and (C_ClassColor and C_ClassColor.GetClassColor and C_ClassColor.GetClassColor(class)
-      or (RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]))
-   if cc then b.name:SetTextColor(cc.r, cc.g, cc.b) else b.name:SetTextColor(1, 1, 1) end
-   -- (health / power may be secret: straight into the bars)
-   b.hp:SetMinMaxValues(0, UnitHealthMax(unit) or 1)
-   b.hp:SetValue(UnitHealth(unit) or 0)
-   if cc then b.hp:SetStatusBarColor(cc.r * 0.85, cc.g * 0.85, cc.b * 0.85, 1) else b.hp:SetStatusBarColor(0.2, 0.7, 0.2, 1) end
+   local coords = class and CLASS_ICON_TCOORDS and CLASS_ICON_TCOORDS[class]
+   if coords then b.class:SetTexCoord(coords[1], coords[2], coords[3], coords[4]); b.class:Show() else b.class:Hide() end
+   local level = UnitLevel(unit)
+   b.level:SetText((not Secret(level) and level and level > 0) and ("Lv" .. level) or "Lv??")
+   b.name:SetText(UnitName(unit) or "?")
+   -- (health and power may be secret: straight into the bars and texts)
+   local hp, hpMax = UnitHealth(unit), UnitHealthMax(unit)
+   b.hp:SetMinMaxValues(0, hpMax or 1)
+   b.hp:SetValue(hp or 0)
    local ptype, ptoken = UnitPowerType(unit)
    local pc = PowerBarColor and (PowerBarColor[ptoken] or PowerBarColor[ptype])
    if pc then b.pw:SetStatusBarColor(pc.r, pc.g, pc.b, 1) else b.pw:SetStatusBarColor(0.2, 0.4, 1, 1) end
+   local pw = UnitPower(unit)
    b.pw:SetMinMaxValues(0, UnitPowerMax(unit) or 1)
-   b.pw:SetValue(UnitPower(unit) or 0)
-   -- (states)
+   b.pw:SetValue(pw or 0)
    local state = ""
-   if not Plain(UnitIsConnected(unit)) and unit ~= "player" then state = "Offline"
+   if unit ~= "player" and not Plain(UnitIsConnected(unit)) then state = "Offline"
    elseif Plain(UnitIsGhost(unit)) then state = "Ghost"
    elseif Plain(UnitIsDead(unit)) then state = "Dead" end
    b.state:SetText(state)
-   b.leader:SetShown(Plain(UnitIsGroupLeader(unit)))
-   -- (out of range: faded)
+   if state == "" then
+      pcall(b.hpText.SetText, b.hpText, hp)
+      pcall(b.pwText.SetText, b.pwText, pw)
+   else
+      b.hpText:SetText(""); b.pwText:SetText("")
+   end
    local inRange = true
    if unit ~= "player" and UnitInRange then
       local r, checked = UnitInRange(unit)
       if Plain(checked) then inRange = Plain(r) end
    end
    b:SetAlpha((state ~= "" or not inRange) and 0.45 or 1)
-   b.targetRim:SetShown(Plain(UnitIsUnit(unit, "target")))
+   b.bracket:SetShown(Plain(UnitIsUnit(unit, "target")))
    local threat = UnitThreatSituation and UnitThreatSituation(unit)
-   b.aggroRim:SetShown(not Secret(threat) and type(threat) == "number" and threat >= 2)
+   b.aggro:SetShown(not Secret(threat) and type(threat) == "number" and threat >= 2)
+   pcall(Buffs, b, unit)
 end
 
 ---------------------------------------------------------------------------
@@ -229,7 +311,6 @@ local function Apply()
    holder:EnableMouse(unlocked)
    if holder.SetBackdropColor then holder:SetBackdropColor(0, 0, 0, unlocked and 0.35 or 0) end
    title:SetShown(unlocked)
-   -- (GroupNavigator re-reads the frames it navigates)
    if addon.GroupNavigator and addon.GroupNavigator.AddUnitFrameRefs and not InCombatLockdown() then
       addon.GroupNavigator:AddUnitFrameRefs()
    end

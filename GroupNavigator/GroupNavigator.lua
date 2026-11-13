@@ -192,6 +192,31 @@ function GroupNavigatorMixin:updateRoster()
 end
 
 function GroupNavigatorMixin:AddUnitFrameRefs()
+   -- (Forever fork: with its party list on, in a party, only its rows: the
+   -- game's frames are faded out but still "visible", and were picked first)
+   if not InCombatLockdown() and addon.Party and addon.Party.Active and addon.Party.Active()
+      and not UnitInRaid("player") then
+      self.units = {}
+      local hasUnits = false
+      self:SetAttribute("group_vertical", self.PartyIsVertical)
+      for j = 1, 5 do
+         local frame = _G["CHBPartyUnitButton" .. j]
+         if frame then
+            -- (every slot points at a row of ours: a hidden one is skipped by the snippet)
+            self.units["1_" .. j] = frame
+            SecureHandlerSetFrameRef(self, "1_" .. j, frame)
+            if frame:IsVisible() then hasUnits = true end
+         end
+      end
+      self:SetAttribute("max_group", 1)
+      self:SetAttribute("max_unit", 5)
+      self:SetAttribute("group_change", true)
+      if hasUnits then
+         self:UpdateSoftTarget(self.SoftTargetFrame.unitKey)
+         self:UpdateSoftTargetHighlight()
+      end
+      return
+   end
    if not InCombatLockdown() then
       self.units =  {}
       local inparty = true
