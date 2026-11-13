@@ -1,5 +1,7 @@
 -- Enmity list (as FFXIV's): the enemies in a fight with you or your party, in
--- a small, clean list: an aggro marker, the name, a thin health bar.
+-- a small, clean list: an aggro marker, the name, a thin health bar in a
+-- bronze trim, and a tiny cast bar that pulses while the cast can be
+-- interrupted. (No debuffs: see the note above the cast bar code.)
 --
 --   marker colour   red     you have aggro (it's on you)
 --                   orange  you're about to lose it / about to pull it
@@ -19,9 +21,6 @@ local ADDON, addon = ...
 
 local MAX_ROWS = 8
 local ROW_W = 200
-local NAME_W = 80         -- (names cut to one width, so the icons line up)
-local ICON = 11
-local MAX_AURAS = 7
 local CAST_H = 2
 local ROW_H = 26          -- (name line + auras, thin trimmed bar, tiny cast bar)
 local BAR_H = 4
@@ -158,7 +157,7 @@ for i = 1, MAX_ROWS do
    -- (the name, above the bar)
    r.name = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
    r.name:SetPoint("TOPLEFT", 16, 0)
-   r.name:SetWidth(NAME_W)
+   r.name:SetPoint("RIGHT", 0, 0)
    r.name:SetJustifyH("LEFT")
    r.name:SetWordWrap(false)
    r.name:SetShadowOffset(1, -1)
@@ -175,27 +174,6 @@ for i = 1, MAX_ROWS do
    r.bar:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
    r.bar:SetStatusBarColor(0.75, 0.16, 0.12, 1)
    local bg = r.bar:CreateTexture(nil, "BACKGROUND"); bg:SetAllPoints(); bg:SetColorTexture(0.137, 0.11, 0.075, 1)
-   -- (auras, right of the name: tiny icons, each on a 1px coloured border)
-   r.auras = {}
-   for k = 1, MAX_AURAS do
-      local a = CreateFrame("Frame", nil, r)
-      a:SetSize(ICON, ICON)
-      a:SetPoint("TOPLEFT", r.name, "TOPRIGHT", 3 + (k - 1) * (ICON + 2), 1)
-      a.border = a:CreateTexture(nil, "BACKGROUND"); a.border:SetAllPoints()
-      a.border:Hide()   -- (no frame round the icons: the icon fills the square)
-      a.icon = a:CreateTexture(nil, "ARTWORK"); a.icon:SetAllPoints()
-      a.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-      a.cd = CreateFrame("Cooldown", nil, a, "CooldownFrameTemplate")
-      a.cd:SetAllPoints(a.icon)
-      a.cd:SetDrawEdge(false)
-      a.cd:SetHideCountdownNumbers(true)
-      a.cd:SetReverse(true)
-      a.count = a:CreateFontString(nil, "OVERLAY", "NumberFontNormalSmall")
-      a.count:SetPoint("BOTTOMRIGHT", 3, -2)
-      a.count:SetScale(0.7)
-      a:Hide()
-      r.auras[k] = a
-   end
    -- (the tiny cast bar, under the health bar; a soft glow pulses round it
    -- while the cast can be interrupted)
    r.castGate = CreateFrame("Frame", nil, r)
@@ -252,138 +230,12 @@ local function Colour(r, e)
 end
 
 ---------------------------------------------------------------------------
--- Auras and casts (secret values go straight into textures / bars)
+-- Casts (secret values go straight into the bar)
 ---------------------------------------------------------------------------
-local BORDER_MINE, BORDER_DEBUFF, BORDER_BUFF = { 0.54, 0.46, 0.32 }, { 0.6, 0.12, 0.1 }, { 0.2, 0.55, 0.2 }
 
--- Enemy auras aren't available to addons on Forever: reading them in a fight
--- is refused ("Auras cannot be accessed when secret"), and the combat log
--- is forbidden. So your own warrior debuffs are followed from your casts
--- (UNIT_SPELLCAST_SUCCEEDED for you): the spell, on your target (or, for the
--- shouts and Thunder Clap, on every enemy in the list), for its known
--- duration, with the game's cooldown sweep. A dodge / parry still counts:
--- the client says the cast went off, not that it landed.
--- [spellID] = { seconds, aoe, stacks (most) }  (Classic ranks)
-local DEBUFFS = {
-   -- Rend
-   [772] = { 9 }, [6546] = { 12 }, [6547] = { 15 }, [6548] = { 18 }, [11572] = { 21 }, [11573] = { 21 }, [11574] = { 21 },
-   -- Hamstring
-   [1715] = { 15 }, [7372] = { 15 }, [7373] = { 15 },
-   -- Sunder Armor (stacks to 5)
-   [7386] = { 30, false, 5 }, [7405] = { 30, false, 5 }, [8380] = { 30, false, 5 }, [11596] = { 30, false, 5 }, [11597] = { 30, false, 5 },
-   -- Thunder Clap (around you)
-   [6343] = { 10, true }, [8198] = { 14, true }, [8204] = { 18, true }, [8205] = { 22, true }, [11580] = { 26, true }, [11581] = { 30, true },
-   -- Demoralizing Shout (around you)
-   [1160] = { 30, true }, [6190] = { 30, true }, [11554] = { 30, true }, [11555] = { 30, true }, [11556] = { 30, true },
-   -- Piercing Howl (around you)
-   [12323] = { 6, true },
-   -- Disarm, Mocking Blow, Concussion Blow
-   [676] = { 10 },
-   [694] = { 6 }, [7400] = { 6 }, [7402] = { 6 }, [20559] = { 6 }, [20560] = { 6 },
-   [12809] = { 5 },
-}
-
-local mine = {}   -- [enemy GUID] = { [spellID] = { icon, start, duration, stacks } }
-
-local function SpellIcon(spellID)
-   if C_Spell and C_Spell.GetSpellTexture then return C_Spell.GetSpellTexture(spellID) end
-   return GetSpellTexture and GetSpellTexture(spellID)
-end
-
--- The value itself, or nil when it's secret (GUIDs to use as keys)
-local function PlainValue(v)
-   if issecretvalue and issecretvalue(v) then return nil end
-   return v
-end
-
-local function Apply(guid, spellID, info, now)
-   if not guid then return end
-   local list = mine[guid] or {}
-   mine[guid] = list
-   local old = list[spellID]
-   local stacks = 1
-   if info[3] and old and now < old.start + old.duration then stacks = math.min(info[3], (old.stacks or 1) + 1) end
-   list[spellID] = { icon = SpellIcon(spellID), start = now, duration = info[1], stacks = stacks }
-end
-
--- Close enough for the area debuffs (Thunder Clap, the shouts: ~10 yards)?
--- The game's ~10 yard check if it answers plainly; else in melee reach of
--- one of your melee abilities (stricter: may miss one at 6-10 yards, never
--- marks a far one). Neither works: not marked. Which one: in the debug log.
-local MELEE_SPELLS = { 1715, 78, 284, 285, 1608, 11564, 11565, 11566, 11567, 772 }   -- (Hamstring, Heroic Strike ranks, Rend)
-local rangeMethod
-
--- A plain yes (true / 1), else no (nil, false, 0, or a secret)
-local function Yes(v)
-   if v == nil or (issecretvalue and issecretvalue(v)) then return false end
-   return v == true or v == 1
-end
-
--- Marked if either check says it's close (neither says so wrongly, so the
--- union adds no false marks; the melee one fills in if the other is silent)
-local function Close(unit)
-   if CheckInteractDistance then
-      local ok, near = pcall(CheckInteractDistance, unit, 3)
-      if ok and Yes(near) then rangeMethod = "~10 yd"; return true end
-   end
-   local inRange = (C_Spell and C_Spell.IsSpellInRange) or IsSpellInRange
-   if inRange then
-      for _, spellID in ipairs(MELEE_SPELLS) do
-         if IsPlayerSpell and IsPlayerSpell(spellID) then
-            local ok, r = pcall(inRange, spellID, unit)
-            if ok and Yes(r) then rangeMethod = "melee reach"; return true end
-            break
-         end
-      end
-   end
-   return false
-end
-
-local casts = CreateFrame("Frame")
-casts:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
-casts:SetScript("OnEvent", function(_, _, _, _, spellID)
-   local info = spellID and not (issecretvalue and issecretvalue(spellID)) and DEBUFFS[spellID]
-   if not info then return end
-   local now = GetTime()
-   if info[2] then
-      local marked = 0
-      for _, e in ipairs(list) do
-         if Close(e.unit) then
-            Apply(PlainValue(UnitGUID(e.unit)), spellID, info, now)
-            marked = marked + 1
-         end
-      end
-      if addon.ForeverLog then
-         addon:ForeverLog(("area debuff %d: %d of %d marked, range by %s"):format(spellID, marked, #list, tostring(rangeMethod)))
-      end
-   elseif UnitExists("target") and UnitCanAttack("player", "target") then
-      Apply(PlainValue(UnitGUID("target")), spellID, info, now)
-   end
-end)
-
-local function Auras(r, unit)
-   local guid = PlainValue(UnitGUID(unit))
-   local list = guid and mine[guid]
-   local now = GetTime()
-   local items = {}
-   if list then
-      for spellID, d in pairs(list) do
-         if now < d.start + d.duration then items[#items + 1] = d else list[spellID] = nil end
-      end
-   end
-   table.sort(items, function(x, y) return x.start < y.start end)
-   for k = 1, MAX_AURAS do
-      local a, d = r.auras[k], items[k]
-      if d then
-         a.icon:SetTexture(d.icon)
-         a.cd:SetCooldown(d.start, d.duration)
-         a.count:SetText((d.stacks and d.stacks > 1) and d.stacks or "")
-         a:Show()
-      else
-         a:Hide()
-      end
-   end
-end
+-- (Enemy debuffs aren't shown: Forever blocks reading enemy auras in a fight
+-- and the combat log, and following your own casts can't tell a dodge or
+-- parry from a hit. The game's nameplates and target frame show them.)
 
 -- The cast (or channel): its times into the bar (secret is fine); the glow
 -- shown while it can be interrupted (a secret answer gates it too, through
@@ -432,7 +284,6 @@ local function Draw()
          r.bar:SetValue(UnitHealth(e.unit) or 0)
          Colour(r, e)
          r.unit = e.unit
-         Auras(r, e.unit)
          if not pcall(Cast, r, e.unit) then r.casting = nil; r.cast:Hide(); r.castGate:Hide() end
          r:Show()
       else
@@ -452,19 +303,6 @@ frame:SetScript("OnDragStop", function(self)
    if s then
       local point, _, rel, x, y = self:GetPoint(1)
       s.enmityPos = { point, rel, x, y }
-   end
-end)
-
-local tidy = CreateFrame("Frame")
-tidy:RegisterEvent("PLAYER_REGEN_ENABLED")
-tidy:SetScript("OnEvent", function()
-   local now = GetTime()
-   for guid, list in pairs(mine) do
-      local any = false
-      for spellID, d in pairs(list) do
-         if now < d.start + d.duration then any = true else list[spellID] = nil end
-      end
-      if not any then mine[guid] = nil end
    end
 end)
 
