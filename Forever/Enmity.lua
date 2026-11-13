@@ -184,6 +184,14 @@ for i = 1, MAX_ROWS do
       a.border = a:CreateTexture(nil, "BACKGROUND"); a.border:SetAllPoints()
       a.icon = a:CreateTexture(nil, "ARTWORK"); a.icon:SetPoint("TOPLEFT", 1, -1); a.icon:SetPoint("BOTTOMRIGHT", -1, 1)
       a.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+      a.cd = CreateFrame("Cooldown", nil, a, "CooldownFrameTemplate")
+      a.cd:SetAllPoints(a.icon)
+      a.cd:SetDrawEdge(false)
+      a.cd:SetHideCountdownNumbers(true)
+      a.cd:SetReverse(true)
+      a.count = a:CreateFontString(nil, "OVERLAY", "NumberFontNormalSmall")
+      a.count:SetPoint("BOTTOMRIGHT", 3, -2)
+      a.count:SetScale(0.7)
       a:Hide()
       r.auras[k] = a
    end
@@ -247,12 +255,92 @@ end
 ---------------------------------------------------------------------------
 local BORDER_MINE, BORDER_DEBUFF, BORDER_BUFF = { 0.54, 0.46, 0.32 }, { 0.6, 0.12, 0.1 }, { 0.2, 0.55, 0.2 }
 
--- Enemy auras: not available to addons on Forever. Reading them in a fight
--- is refused ("Auras cannot be accessed when secret while tainted"), and
--- registering for the combat log is forbidden (ADDON_ACTION_FORBIDDEN on
--- RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")). The icons stay hidden.
-local function Auras(r)
-   for k = 1, MAX_AURAS do r.auras[k]:Hide() end
+-- Enemy auras aren't available to addons on Forever: reading them in a fight
+-- is refused ("Auras cannot be accessed when secret"), and the combat log
+-- is forbidden. So your own warrior debuffs are followed from your casts
+-- (UNIT_SPELLCAST_SUCCEEDED for you): the spell, on your target (or, for the
+-- shouts and Thunder Clap, on every enemy in the list), for its known
+-- duration, with the game's cooldown sweep. A dodge / parry still counts:
+-- the client says the cast went off, not that it landed.
+-- [spellID] = { seconds, aoe, stacks (most) }  (Classic ranks)
+local DEBUFFS = {
+   -- Rend
+   [772] = { 9 }, [6546] = { 12 }, [6547] = { 15 }, [6548] = { 18 }, [11572] = { 21 }, [11573] = { 21 }, [11574] = { 21 },
+   -- Hamstring
+   [1715] = { 15 }, [7372] = { 15 }, [7373] = { 15 },
+   -- Sunder Armor (stacks to 5)
+   [7386] = { 30, false, 5 }, [7405] = { 30, false, 5 }, [8380] = { 30, false, 5 }, [11596] = { 30, false, 5 }, [11597] = { 30, false, 5 },
+   -- Thunder Clap (around you)
+   [6343] = { 10, true }, [8198] = { 14, true }, [8204] = { 18, true }, [8205] = { 22, true }, [11580] = { 26, true }, [11581] = { 30, true },
+   -- Demoralizing Shout (around you)
+   [1160] = { 30, true }, [6190] = { 30, true }, [11554] = { 30, true }, [11555] = { 30, true }, [11556] = { 30, true },
+   -- Piercing Howl (around you)
+   [12323] = { 6, true },
+   -- Disarm, Mocking Blow, Concussion Blow
+   [676] = { 10 },
+   [694] = { 6 }, [7400] = { 6 }, [7402] = { 6 }, [20559] = { 6 }, [20560] = { 6 },
+   [12809] = { 5 },
+}
+
+local mine = {}   -- [enemy GUID] = { [spellID] = { icon, start, duration, stacks } }
+
+local function SpellIcon(spellID)
+   if C_Spell and C_Spell.GetSpellTexture then return C_Spell.GetSpellTexture(spellID) end
+   return GetSpellTexture and GetSpellTexture(spellID)
+end
+
+-- The value itself, or nil when it's secret (GUIDs to use as keys)
+local function PlainValue(v)
+   if issecretvalue and issecretvalue(v) then return nil end
+   return v
+end
+
+local function Apply(guid, spellID, info, now)
+   if not guid then return end
+   local list = mine[guid] or {}
+   mine[guid] = list
+   local old = list[spellID]
+   local stacks = 1
+   if info[3] and old and now < old.start + old.duration then stacks = math.min(info[3], (old.stacks or 1) + 1) end
+   list[spellID] = { icon = SpellIcon(spellID), start = now, duration = info[1], stacks = stacks }
+end
+
+local casts = CreateFrame("Frame")
+casts:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
+casts:SetScript("OnEvent", function(_, _, _, _, spellID)
+   local info = spellID and not (issecretvalue and issecretvalue(spellID)) and DEBUFFS[spellID]
+   if not info then return end
+   local now = GetTime()
+   if info[2] then
+      for _, e in ipairs(list) do Apply(PlainValue(UnitGUID(e.unit)), spellID, info, now) end
+   elseif UnitExists("target") and UnitCanAttack("player", "target") then
+      Apply(PlainValue(UnitGUID("target")), spellID, info, now)
+   end
+end)
+
+local function Auras(r, unit)
+   local guid = PlainValue(UnitGUID(unit))
+   local list = guid and mine[guid]
+   local now = GetTime()
+   local items = {}
+   if list then
+      for spellID, d in pairs(list) do
+         if now < d.start + d.duration then items[#items + 1] = d else list[spellID] = nil end
+      end
+   end
+   table.sort(items, function(x, y) return x.start < y.start end)
+   for k = 1, MAX_AURAS do
+      local a, d = r.auras[k], items[k]
+      if d then
+         a.icon:SetTexture(d.icon)
+         a.border:SetColorTexture(BORDER_MINE[1], BORDER_MINE[2], BORDER_MINE[3], 1)
+         a.cd:SetCooldown(d.start, d.duration)
+         a.count:SetText((d.stacks and d.stacks > 1) and d.stacks or "")
+         a:Show()
+      else
+         a:Hide()
+      end
+   end
 end
 
 -- The cast (or channel): its times into the bar (secret is fine); the glow
@@ -302,7 +390,7 @@ local function Draw()
          r.bar:SetValue(UnitHealth(e.unit) or 0)
          Colour(r, e)
          r.unit = e.unit
-         Auras(r)
+         Auras(r, e.unit)
          if not pcall(Cast, r, e.unit) then r.casting = nil; r.cast:Hide(); r.castGate:Hide() end
          r:Show()
       else
@@ -322,6 +410,19 @@ frame:SetScript("OnDragStop", function(self)
    if s then
       local point, _, rel, x, y = self:GetPoint(1)
       s.enmityPos = { point, rel, x, y }
+   end
+end)
+
+local tidy = CreateFrame("Frame")
+tidy:RegisterEvent("PLAYER_REGEN_ENABLED")
+tidy:SetScript("OnEvent", function()
+   local now = GetTime()
+   for guid, list in pairs(mine) do
+      local any = false
+      for spellID, d in pairs(list) do
+         if now < d.start + d.duration then any = true else list[spellID] = nil end
+      end
+      if not any then mine[guid] = nil end
    end
 end)
 
