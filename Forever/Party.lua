@@ -421,7 +421,8 @@ local function Probe()
          name = (ok and type(path) == "string" and not Secret(path)) and ("(unnamed) " .. path) or "(unnamed)"
       end
       if name:find("CHBParty") then return end
-      if f:GetFrameStrata() == "LOW" then return end   -- (the party frames themselves)
+      local okE, effective = pcall(f.GetEffectiveAlpha, f)
+      if okE and not Secret(effective) and effective <= 0.02 then return end   -- (drawn invisible: not it)
       local parent = f:GetParent()
       local pname = parent and parent.GetName and parent:GetName()
       log(("%s [%s] strata=%s level=%s parent=%s"):format(name, tostring(f:GetObjectType()), tostring(f:GetFrameStrata()),
