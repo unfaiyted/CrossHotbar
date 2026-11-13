@@ -247,9 +247,11 @@ end
 ---------------------------------------------------------------------------
 local BORDER_MINE, BORDER_DEBUFF, BORDER_BUFF = { 0.54, 0.46, 0.32 }, { 0.6, 0.12, 0.1 }, { 0.2, 0.55, 0.2 }
 
+local auraDiag = {}   -- (what the aura API did, for the debug log)
 local function AuraAt(unit, index, filter)
    if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
       local ok, aura = pcall(C_UnitAuras.GetAuraDataByIndex, unit, index, filter)
+      if not ok then auraDiag.err = tostring(aura) end
       return ok and aura or nil
    elseif UnitAura then
       local name, icon = UnitAura(unit, index, filter)
@@ -269,10 +271,23 @@ local function Auras(r, unit)
       a.border:SetColorTexture(border[1], border[2], border[3], 1)
       a:Show()
    end
+   local mineCount, allCount = 0, 0
    for k = 1, 20 do
       local aura = AuraAt(unit, k, "HARMFUL|PLAYER")
       if not aura then break end
+      mineCount = mineCount + 1
       add(aura, BORDER_MINE)
+   end
+   for k = 1, 40 do
+      if not AuraAt(unit, k, "HARMFUL") then break end
+      allCount = allCount + 1
+   end
+   auraDiag.mine, auraDiag.all = mineCount, allCount
+   auraDiag.api = (C_UnitAuras and C_UnitAuras.GetAuraDataByIndex) and "C_UnitAuras" or (UnitAura and "UnitAura" or "none")
+   -- (the old API too, as a check)
+   if UnitAura then
+      local okOld, nameOld = pcall(UnitAura, unit, 1, "HARMFUL")
+      auraDiag.old = okOld and (type(nameOld) == "string" and not Secret(nameOld) and nameOld or tostring(type(nameOld))) or ("err " .. tostring(nameOld))
    end
    for k = 1, 40 do
       local aura = AuraAt(unit, k, "HARMFUL")
@@ -286,6 +301,7 @@ local function Auras(r, unit)
       add(aura, BORDER_BUFF)
    end
    for k = n + 1, MAX_AURAS do r.auras[k]:Hide() end
+   auraDiag.shown = n
 end
 
 -- The cast (or channel): its times into the bar (secret is fine); the glow
@@ -335,8 +351,11 @@ local function Draw()
          r.bar:SetValue(UnitHealth(e.unit) or 0)
          Colour(r, e)
          r.unit = e.unit
-         local okA = pcall(Auras, r, e.unit)
-         if not okA then for k = 1, MAX_AURAS do r.auras[k]:Hide() end end
+         local okA, errA = pcall(Auras, r, e.unit)
+         if not okA then
+            auraDiag.err = tostring(errA)
+            for k = 1, MAX_AURAS do r.auras[k]:Hide() end
+         end
          if not pcall(Cast, r, e.unit) then r.casting = nil; r.cast:Hide(); r.castGate:Hide() end
          r:Show()
       else
@@ -361,7 +380,15 @@ end)
 
 local ticker = CreateFrame("Frame")
 local since = 0
+local auraLogAt = 0
 ticker:SetScript("OnUpdate", function(_, elapsed)
+   if UnitAffectingCombat("player") and #list > 0 and GetTime() - auraLogAt > 3 and addon.ForeverLog then
+      auraLogAt = GetTime()
+      addon:ForeverLog(("enmity auras: api %s, mine %s, all harmful %s, shown %s, old UnitAura #1 %s%s"):format(
+         tostring(auraDiag.api), tostring(auraDiag.mine), tostring(auraDiag.all), tostring(auraDiag.shown),
+         tostring(auraDiag.old), auraDiag.err and (", error: " .. auraDiag.err) or ""))
+      auraDiag.err = nil
+   end
    for _, r in ipairs(rows) do
       if r.casting and r:IsShown() then r.cast:SetValue(GetTime() * 1000) end
    end
