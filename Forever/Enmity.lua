@@ -43,20 +43,31 @@ data:SetAttribute("count", 0)
 local units, list = {}, {}
 
 -- (why each candidate was kept or not: for the diagnostics)
+-- Forever hands enemy health and threat to addons as "secret" values: they
+-- can go into the game's widgets (a StatusBar), and be checked for being
+-- there, but not compared, sorted or used in sums. So: plain booleans only.
+local function Secret(v)
+   return issecretvalue ~= nil and issecretvalue(v)
+end
+
+-- A plain true / false from something that may be secret (secret: unknown, false)
+local function Plain(v)
+   if Secret(v) then return false end
+   return v and true or false
+end
+
 local function Check(unit)
    if not UnitExists(unit) then return nil, "none" end
-   if not UnitCanAttack("player", unit) then return nil, "friendly" end
-   if UnitIsDead(unit) then return nil, "dead" end
-   local targetsMe = UnitIsUnit(unit .. "target", "player")
-   local tanking, status, pct
-   if UnitDetailedThreatSituation then
-      tanking, status, pct = UnitDetailedThreatSituation("player", unit)
+   if not Plain(UnitCanAttack("player", unit)) then return nil, "friendly" end
+   if Plain(UnitIsDead(unit)) then return nil, "dead" end
+   local targetsMe = Plain(UnitIsUnit(unit .. "target", "player"))
+   -- (on the threat list: the API gives a value, secret or not; nil when not)
+   local status = UnitThreatSituation and UnitThreatSituation("player", unit)
+   local onList = type(status) == "number"
+   if not (targetsMe or onList) then
+      return nil, "not engaged"
    end
-   if not status and UnitThreatSituation then status = UnitThreatSituation("player", unit) end
-   if not (targetsMe or status) then
-      return nil, "not engaged (combat=" .. tostring(UnitAffectingCombat(unit)) .. ")"
-   end
-   return { unit = unit, targetsMe = targetsMe, tanking = tanking, status = status or 0, pct = pct or 0 }, "kept"
+   return { unit = unit, targetsMe = targetsMe }, "kept"
 end
 
 -- Where enemies can come from: nameplates, then the units the game names
@@ -75,14 +86,19 @@ local function Scan()
       if unit:find("^nameplate") then plates = plates + 1 end
       local e, reason = Check(unit)
       if e then list[#list + 1] = e end
-      if #why < 4 then why[#why + 1] = unit .. "=" .. (UnitName(unit) or "?") .. ":" .. reason end
+      if #why < 4 then
+         local name = UnitName(unit)
+         if Secret(name) or type(name) ~= "string" then name = "?" end
+         why[#why + 1] = unit .. "=" .. name .. ":" .. reason
+      end
    end
    for i = 1, 40 do consider("nameplate" .. i) end
    for _, unit in ipairs(OTHER) do consider(unit) end
+   -- (targeting you first; otherwise the order found: threat amounts are secret)
+   for i, e in ipairs(list) do e.order = i end
    table.sort(list, function(a, b)
-      if (a.targetsMe or a.tanking) ~= (b.targetsMe or b.tanking) then return (a.targetsMe or a.tanking) and true or false end
-      if a.status ~= b.status then return a.status > b.status end
-      return a.pct > b.pct
+      if a.targetsMe ~= b.targetsMe then return a.targetsMe end
+      return a.order < b.order
    end)
    data:SetAttribute("count", #list)
    for i = 1, 40 do data:SetAttribute("u" .. i, list[i] and list[i].unit or nil) end
@@ -123,7 +139,6 @@ for i = 1, MAX_ROWS do
    r.bar:SetPoint("TOPLEFT", 12, 0); r.bar:SetPoint("BOTTOMRIGHT")
    r.bar:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
    r.bar:SetStatusBarColor(0.55, 0.1, 0.1, 0.9)
-   r.bar:SetMinMaxValues(0, 1)
    local bg = r.bar:CreateTexture(nil, "BACKGROUND"); bg:SetAllPoints(); bg:SetColorTexture(0, 0, 0, 0.6)
    r.threat = r:CreateTexture(nil, "ARTWORK"); r.threat:SetSize(8, ROW_H); r.threat:SetPoint("LEFT")
    r.name = r.bar:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -146,13 +161,14 @@ local function Draw()
    for i, r in ipairs(rows) do
       local e = list[i]
       if e then
-         local hp, max = UnitHealth(e.unit), UnitHealthMax(e.unit)
-         r.bar:SetValue(max and max > 0 and hp / max or 0)
+         -- (health may be secret: straight into the bar, which takes it)
+         r.bar:SetMinMaxValues(0, UnitHealthMax(e.unit) or 1)
+         r.bar:SetValue(UnitHealth(e.unit) or 0)
          r.name:SetText(UnitName(e.unit) or "?")
-         r.pct:SetText(max and max > 0 and (math.floor(hp / max * 100 + 0.5) .. "%") or "")
-         local c = THREAT_COLORS[e.targetsMe and 3 or e.status] or THREAT_COLORS[0]
+         r.pct:SetText("")
+         local c = THREAT_COLORS[e.targetsMe and 3 or 2]
          r.threat:SetColorTexture(c[1], c[2], c[3], 1)
-         r.mark:SetShown(UnitIsUnit(e.unit, "target"))
+         r.mark:SetShown(Plain(UnitIsUnit(e.unit, "target")))
          r:Show()
       else
          r:Hide()
