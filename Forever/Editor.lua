@@ -1,22 +1,16 @@
 -- Crossbar editor: put spells, items and macros on CrossHotbar's bars with
 -- the gamepad (or the mouse / drag and drop).
 --
---   Left: what can go on a bar (Spells, Items, Macros), with a tooltip of the
---         one highlighted.
---   Right: the four crossbars of a set, drawn as FFXIV crosses: L2 and R2 on
---          top, L2 > R2 and R2 > L2 (WXHB) below; each a D-pad cross, a face
---          button cross and a small cross of the four expanded slots.
---
--- Pad (the legend at the bottom shows it):
---   list:  left stick / D-pad up-down choose, D-pad left-right category,
---          A take it, B close
---   slot:  hold L2 / R2 (+ the other for WXHB) and press the slot's button,
---          FFXIV style; or move with the D-pad / left stick and A; X empties
---          the slot, B back
---   both:  LB / RB change the set being edited (1-6; "in use" marks the one
---          the crossbar shows in game: R1 + D-pad up / down there)
--- Mouse: click an entry, then a slot (right-click empties); slots take
--- anything dropped on them and can be dragged out.
+--   1. The list: what can go on a bar (Spells, Items, Macros; D-pad
+--      left / right), a tooltip of the one highlighted. A takes it.
+--   2. The crossbar, as the game draws it: [L2 D-pad][L2 face]  [R2 D-pad]
+--      [R2 face], each slot with its pad button. Hold L2 / R2 (L2 then R2,
+--      R2 then L2: the WXHB bars) and press the button: it goes there, and
+--      it's back to the list. Or move with the D-pad / left stick and A.
+--      Y cycles the view (L2 | R2, WXHB, Expanded), X empties a slot, B back.
+--   LB / RB: the set being edited (1-6), any time.
+-- Mouse: click an entry, then a slot (right-click empties); dragging
+-- anything (spellbook, bags) shows the crossbar to drop it on.
 --
 -- A set's pages are worked out the way CrossHotbar's page handler does
 -- (CrossHotbar.lua _onstate-page), so every set can be edited, not only the
@@ -48,12 +42,11 @@ local DEFAULT_KEYS = { "PAD2", "PAD4", "PAD1", "PAD3", "PADDRIGHT", "PADDUP", "P
 local TABS = { "Spells", "Items", "Macros" }
 local VISIBLE = 14
 local ROW_H = 26
-local S = 34          -- (slot size)
-local SMALL = 26      -- (expanded slot size)
+local S = 40          -- (slot size)
 
 local win, tabText, setText, legend, carry
 local rowsUI, slotsUI = {}, {}
-local state = { tab = 1, sel = 1, top = 1, mode = "list", cursor = 1, picked = nil, held = {}, set = 1, stickY = 0, stickX = 0 }
+local state = { tab = 1, sel = 1, top = 1, mode = "list", cursor = 1, picked = nil, held = {}, set = 1, view = 1, stickY = 0, stickX = 0 }
 local entries = {}
 
 local function Log(msg)
@@ -292,64 +285,155 @@ end
 ---------------------------------------------------------------------------
 -- Drawing
 ---------------------------------------------------------------------------
+-- Two steps, one window that changes size:
+--   list:   what to put on a bar (the list, a tooltip beside it)
+--   assign: the crossbar as the game draws it, [L2 D-pad][L2 face]
+--           [R2 D-pad][R2 face]; the trigger(s) held light their half (or
+--           switch to the WXHB bars), the slot's button puts it there.
+--           Y cycles the view: L2 | R2, WXHB (L2>R2 | R2>L2), Expanded.
+local VIEWS = {
+   { name = "L2  |  R2",         halves = { { row = 1, crosses = { 1, 2 } }, { row = 2, crosses = { 1, 2 } } } },
+   { name = "L2>R2  |  R2>L2",   halves = { { row = 3, crosses = { 1, 2 } }, { row = 4, crosses = { 1, 2 } } } },
+   { name = "Expanded",          halves = { { row = 1, crosses = { 3 } },    { row = 2, crosses = { 3 } } } },
+}
+local LIST_W = 340
+local SLOT_GAP = 6
+local STEP = S + SLOT_GAP
+local CROSS_W = STEP * 3
+local HALF_GAP = 40
+
 local function LegendText()
    local parts
    if state.mode == "list" then
       parts = {
          Glyph("PADDUP") .. Glyph("PADDDOWN") .. " choose",
          Glyph("PADDLEFT") .. Glyph("PADDRIGHT") .. " category",
-         Glyph("PADLSHOULDER") .. Glyph("PADRSHOULDER") .. " set",
          Glyph("PAD1") .. " take",
          Glyph("PAD2") .. " close",
       }
    else
       parts = {
-         Glyph("PADLTRIGGER") .. "/" .. Glyph("PADRTRIGGER") .. " + button: put it there",
-         Glyph("PADDUP") .. " move",
-         Glyph("PAD1") .. " put",
-         Glyph("PAD3") .. " empty",
+         "hold " .. Glyph("PADLTRIGGER") .. " / " .. Glyph("PADRTRIGGER") .. ", press a button: put it there",
+         Glyph("PAD4") .. " view",
          Glyph("PADLSHOULDER") .. Glyph("PADRSHOULDER") .. " set",
+         Glyph("PAD3") .. " empty",
          Glyph("PAD2") .. " back",
       }
    end
-   return table.concat(parts, "     ")
+   return table.concat(parts, "    ")
+end
+
+-- The rows lit by the triggers held (and the view they switch to)
+local function TriggerRow()
+   local h = state.held
+   if h.L and h.R then return (h.L < h.R) and 3 or 4 end
+   if h.L then return 1 end
+   if h.R then return 2 end
+end
+
+local function CurrentView()
+   local row = TriggerRow()
+   if row == 3 or row == 4 then return 2 end
+   if row == 1 or row == 2 then return state.view == 3 and 3 or 1 end
+   return state.view
+end
+
+-- Places the slots of the view shown; hides the rest
+local assign, assignTitle, viewText, halfLabels = nil, nil, nil, {}
+local function Layout()
+   local view = VIEWS[CurrentView()]
+   for _, s in ipairs(slotsUI) do s.visible = false end
+   local x = 0
+   for h, half in ipairs(view.halves) do
+      halfLabels[h]:ClearAllPoints()
+      halfLabels[h]:SetPoint("BOTTOMLEFT", assign, "TOPLEFT", x, -26)
+      halfLabels[h]:SetText(ROWS[half.row].label)
+      halfLabels[h].row = half.row
+      for _, c in ipairs(half.crosses) do
+         local cx, cy = x + CROSS_W / 2, -36 - CROSS_W / 2
+         for _, s in ipairs(slotsUI) do
+            if s.row == half.row and s.cross == c then
+               local px, py = cx + s.dx * STEP, cy + s.dy * STEP
+               s:ClearAllPoints()
+               s:SetPoint("CENTER", assign, "TOPLEFT", px, py)
+               s.cx, s.cy = px, py
+               s.visible = true
+            end
+         end
+         x = x + CROSS_W + 8
+      end
+      x = x + HALF_GAP
+   end
+   for _, s in ipairs(slotsUI) do s:SetShown(s.visible) end
+   local width = x - HALF_GAP
+   assign:SetSize(width, 36 + CROSS_W + 8)
+   return width
+end
+
+local function SetMode(mode)
+   state.mode = mode
+   if not win then return end
+   local listShown = mode == "list"
+   win.list:SetShown(listShown)
+   tabText:SetShown(listShown)
+   assign:SetShown(not listShown)
 end
 
 Refresh = function()
    if not (win and win:IsShown()) then return end
    local active = ActiveSet()
    setText:SetText(("Set %d / %d%s"):format(state.set, SETS,
-      state.set == active and "   |cff66ff66(in use)|r" or ("   |cff999999(in use: " .. active .. ")|r")))
-   local tabs = {}
-   for i, name in ipairs(TABS) do
-      tabs[i] = (i == state.tab) and ("|cffffd100" .. name:upper() .. "|r") or ("|cff888888" .. name .. "|r")
-   end
-   tabText:SetText(table.concat(tabs, "    ") .. "   |cff666666(" .. #entries .. ")|r")
-   -- list
-   if state.sel < state.top then state.top = state.sel end
-   if state.sel >= state.top + VISIBLE then state.top = state.sel - VISIBLE + 1 end
-   for i = 1, VISIBLE do
-      local ui, entry = rowsUI[i], entries[state.top + i - 1]
-      if entry then
-         ui.icon:SetTexture(entry.icon)
-         ui.text:SetText(entry.name)
-         ui.sub:SetText(entry.group or "")
-         ui.light:SetShown(state.top + i - 1 == state.sel and state.mode == "list")
-         ui.picked:SetShown(state.picked == entry)
-         ui:Show()
-      else
-         ui:Hide()
+      state.set == active and "  |cff66ff66in use|r" or ("  |cff999999(in use: " .. active .. ")|r")))
+   local width
+   if state.mode == "list" then
+      local tabs = {}
+      for i, name in ipairs(TABS) do
+         tabs[i] = (i == state.tab) and ("|cffffd100" .. name:upper() .. "|r") or ("|cff888888" .. name .. "|r")
       end
-   end
-   -- crosses
-   local keys = SlotKeys()
-   for n, s in ipairs(slotsUI) do
-      local slot = ActionSlot(state.set, s.row, s.index)
-      local texture = slot and GetActionTexture(slot)
-      s.icon:SetTexture(texture or nil)
-      s.icon:SetShown(texture ~= nil)
-      s.key:SetText(s.index <= 8 and Glyph(keys[s.index], s.small and 12 or 14) or "")
-      s.light:SetShown(state.mode == "slot" and state.cursor == n)
+      tabText:SetText(table.concat(tabs, "    ") .. "   |cff666666(" .. #entries .. ")|r")
+      if state.sel < state.top then state.top = state.sel end
+      if state.sel >= state.top + VISIBLE then state.top = state.sel - VISIBLE + 1 end
+      for i = 1, VISIBLE do
+         local ui, entry = rowsUI[i], entries[state.top + i - 1]
+         if entry then
+            ui.icon:SetTexture(entry.icon)
+            ui.text:SetText(entry.name)
+            ui.sub:SetText(entry.group or "")
+            ui.light:SetShown(state.top + i - 1 == state.sel)
+            ui:Show()
+         else
+            ui:Hide()
+         end
+      end
+      width = LIST_W
+      win:SetSize(width + 32, 64 + VISIBLE * ROW_H + 44)
+   else
+      width = Layout()
+      local p = state.picked
+      assignTitle:SetText(p and ("|T" .. tostring(p.icon) .. ":20|t  " .. p.name) or "Drop it on a slot")
+      viewText:SetText("|cff999999" .. Glyph("PAD4", 14) .. "|r " .. VIEWS[CurrentView()].name)
+      local lit = TriggerRow()
+      for _, label in ipairs(halfLabels) do
+         label:SetAlpha((not lit or label.row == lit) and 1 or 0.35)
+      end
+      local keys = SlotKeys()
+      if not (slotsUI[state.cursor] and slotsUI[state.cursor].visible) then
+         for n, s in ipairs(slotsUI) do if s.visible then state.cursor = n break end end
+      end
+      for n, s in ipairs(slotsUI) do
+         if s.visible then
+            local slot = ActionSlot(state.set, s.row, s.index)
+            local texture = slot and GetActionTexture(slot)
+            s.icon:SetTexture(texture or nil)
+            s.icon:SetShown(texture ~= nil)
+            s.empty:SetShown(texture == nil)
+            local key = s.index <= 8 and keys[s.index]
+            s.key:SetText(key and Glyph(key, 20) or ("E" .. (s.index - 8)))
+            s.light:SetShown(state.cursor == n)
+            s:SetAlpha((not lit or s.row == lit) and 1 or 0.3)
+         end
+      end
+      win:SetSize(math.max(width + 32, 420), 64 + 36 + CROSS_W + 8 + 44)
    end
    legend:SetText(LegendText())
    ShowTip()
@@ -358,12 +442,13 @@ end
 ---------------------------------------------------------------------------
 -- Moving around
 ---------------------------------------------------------------------------
--- The nearest slot in a direction (screen space), for the cursor
+-- The nearest shown slot in a direction (screen space), for the cursor
 local function Neighbour(from, dx, dy)
    local a = slotsUI[from]
+   if not (a and a.visible) then return from end
    local best, bestScore
    for n, b in ipairs(slotsUI) do
-      if n ~= from then
+      if n ~= from and b.visible then
          local vx, vy = b.cx - a.cx, b.cy - a.cy
          local along = vx * dx + vy * dy
          if along > 1 then
@@ -396,20 +481,21 @@ local function Close()
    if win then win:Hide() end
 end
 
+local function Back()
+   state.picked = nil
+   SetMode("list")
+   ClearCursor()
+   Refresh()
+end
+
 local function Pick()
    local entry = entries[state.sel]
    if not entry then return end
    state.picked = entry
-   state.mode = "slot"
+   state.view = 1
+   SetMode("slot")
    PlaySound(SOUNDKIT and SOUNDKIT.IG_MAINMENU_OPTION or 857)
    Refresh()
-end
-
-local function TriggerRow()
-   local h = state.held
-   if h.L and h.R then return (h.L < h.R) and 3 or 4 end
-   if h.L then return 1 end
-   if h.R then return 2 end
 end
 
 local function CursorTo(row, index)
@@ -418,52 +504,61 @@ local function CursorTo(row, index)
    end
 end
 
+-- Placed: back to the list for the next one (the bar stays shown a moment)
+local function Placed()
+   C_Timer.After(0.35, function()
+      if win and win:IsShown() and state.mode == "slot" and not TriggerRow() then Back() end
+   end)
+end
+
 local function OnPad(_, key)
-   if key == "PADLTRIGGER" then state.held.L = GetTime() return end
-   if key == "PADRTRIGGER" then state.held.R = GetTime() return end
+   if key == "PADLTRIGGER" then state.held.L = GetTime(); Refresh() return end
+   if key == "PADRTRIGGER" then state.held.R = GetTime(); Refresh() return end
    if key == "PADLSHOULDER" then ChangeSet(-1) return end
    if key == "PADRSHOULDER" then ChangeSet(1) return end
-   local triggerRow = TriggerRow()
-   if state.mode == "slot" and triggerRow then
-      local keys = SlotKeys()
-      for index = 1, 8 do
-         if keys[index] == key then
-            CursorTo(triggerRow, index)
-            Place(state.picked, state.set, triggerRow, index)
-            return
+   if state.mode == "slot" then
+      local row = TriggerRow()
+      if row then
+         -- hold the trigger(s), press the slot's button
+         local keys = SlotKeys()
+         for index = 1, 8 do
+            if keys[index] == key then
+               CursorTo(row, index)
+               if state.picked then Place(state.picked, state.set, row, index); Placed() end
+               return
+            end
          end
+         return
       end
-      return
-   end
-   if key == "PAD2" then
-      if state.mode == "slot" then state.mode = "list"; state.picked = nil; Refresh() else Close() end
-   elseif state.mode == "list" then
-      if key == "PADDDOWN" then MoveList(1)
-      elseif key == "PADDUP" then MoveList(-1)
-      elseif key == "PADDRIGHT" or key == "PADDLEFT" then
-         state.tab = (state.tab - 1 + (key == "PADDRIGHT" and 1 or -1)) % #TABS + 1
-         state.sel, state.top = 1, 1
-         Load(); Refresh()
-      elseif key == "PAD1" then Pick()
-      end
-   else
-      if key == "PADDDOWN" then MoveCursor(0, -1)
+      if key == "PAD2" then Back()
+      elseif key == "PAD4" then state.view = state.view % #VIEWS + 1; Refresh()
+      elseif key == "PADDDOWN" then MoveCursor(0, -1)
       elseif key == "PADDUP" then MoveCursor(0, 1)
       elseif key == "PADDRIGHT" then MoveCursor(1, 0)
       elseif key == "PADDLEFT" then MoveCursor(-1, 0)
       elseif key == "PAD1" then
          local s = slotsUI[state.cursor]
-         Place(state.picked, state.set, s.row, s.index)
+         if s and state.picked then Place(state.picked, state.set, s.row, s.index); Placed() end
       elseif key == "PAD3" then
          local s = slotsUI[state.cursor]
-         Empty(state.set, s.row, s.index)
+         if s then Empty(state.set, s.row, s.index) end
       end
+      return
+   end
+   if key == "PAD2" then Close()
+   elseif key == "PADDDOWN" then MoveList(1)
+   elseif key == "PADDUP" then MoveList(-1)
+   elseif key == "PADDRIGHT" or key == "PADDLEFT" then
+      state.tab = (state.tab - 1 + (key == "PADDRIGHT" and 1 or -1)) % #TABS + 1
+      state.sel, state.top = 1, 1
+      Load(); Refresh()
+   elseif key == "PAD1" then Pick()
    end
 end
 
 local function OnPadUp(_, key)
-   if key == "PADLTRIGGER" then state.held.L = nil end
-   if key == "PADRTRIGGER" then state.held.R = nil end
+   if key == "PADLTRIGGER" then state.held.L = nil; Refresh() end
+   if key == "PADRTRIGGER" then state.held.R = nil; Refresh() end
 end
 
 -- The left stick: held past half way, it moves, then repeats
@@ -500,30 +595,42 @@ end
 ---------------------------------------------------------------------------
 -- Building the window
 ---------------------------------------------------------------------------
-local function SlotButton(parent, row, index, size, x, y)
+local function SlotButton(parent, row, cross, index, dx, dy)
    local ui = CreateFrame("Button", nil, parent)
-   ui:SetSize(size, size)
-   ui:SetPoint("CENTER", parent, "TOPLEFT", x, y)
-   ui.row, ui.index, ui.small = row, index, size < S
-   ui.cx, ui.cy = x, y
-   local bg = ui:CreateTexture(nil, "BACKGROUND"); bg:SetAllPoints(); bg:SetColorTexture(1, 1, 1, 0.08)
-   local edge = ui:CreateTexture(nil, "BORDER"); edge:SetPoint("TOPLEFT", -1, 1); edge:SetPoint("BOTTOMRIGHT", 1, -1)
-   edge:SetColorTexture(0, 0, 0, 0.6)
-   ui.icon = ui:CreateTexture(nil, "ARTWORK"); ui.icon:SetPoint("TOPLEFT", 2, -2); ui.icon:SetPoint("BOTTOMRIGHT", -2, 2)
-   ui.key = ui:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); ui.key:SetPoint("BOTTOMRIGHT", 4, -4)
-   ui.light = ui:CreateTexture(nil, "OVERLAY"); ui.light:SetPoint("TOPLEFT", -4, 4); ui.light:SetPoint("BOTTOMRIGHT", 4, -4)
-   ui.light:SetColorTexture(1, 0.82, 0, 0.5)
-   local hl = ui:CreateTexture(nil, "HIGHLIGHT"); hl:SetAllPoints(); hl:SetColorTexture(1, 1, 1, 0.2)
+   ui:SetSize(S, S)
+   ui.row, ui.cross, ui.index, ui.dx, ui.dy = row, cross, index, dx, dy
+   ui.cx, ui.cy = 0, 0
+   -- (contrast: a dark well with a light rim; the icon inside it)
+   local rim = ui:CreateTexture(nil, "BACKGROUND", nil, 0); rim:SetPoint("TOPLEFT", -2, 2); rim:SetPoint("BOTTOMRIGHT", 2, -2)
+   rim:SetColorTexture(0.75, 0.75, 0.8, 0.55)
+   local well = ui:CreateTexture(nil, "BACKGROUND", nil, 1); well:SetAllPoints(); well:SetColorTexture(0.02, 0.02, 0.03, 1)
+   ui.empty = ui:CreateTexture(nil, "BORDER"); ui.empty:SetPoint("TOPLEFT", 4, -4); ui.empty:SetPoint("BOTTOMRIGHT", -4, 4)
+   ui.empty:SetColorTexture(1, 1, 1, 0.05)
+   ui.icon = ui:CreateTexture(nil, "ARTWORK"); ui.icon:SetPoint("TOPLEFT", 1, -1); ui.icon:SetPoint("BOTTOMRIGHT", -1, 1)
+   -- (the pad button, big, on a dark badge in the corner)
+   local badge = ui:CreateTexture(nil, "OVERLAY", nil, 1); badge:SetSize(22, 22); badge:SetPoint("BOTTOMRIGHT", 8, -8)
+   badge:SetColorTexture(0, 0, 0, 0.75)
+   ui.key = ui:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); ui.key:SetPoint("CENTER", badge, "CENTER", 0, 0)
+   ui.key:SetDrawLayer("OVERLAY", 2)
+   -- (the cursor: a gold frame round the slot)
+   ui.light = CreateFrame("Frame", nil, ui, "BackdropTemplate")
+   ui.light:SetPoint("TOPLEFT", -5, 5); ui.light:SetPoint("BOTTOMRIGHT", 5, -5)
+   if ui.light.SetBackdrop then
+      ui.light:SetBackdrop({ edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 3 })
+      ui.light:SetBackdropBorderColor(1, 0.82, 0, 1)
+   end
+   ui.light:Hide()
+   local hl = ui:CreateTexture(nil, "HIGHLIGHT"); hl:SetAllPoints(); hl:SetColorTexture(1, 1, 1, 0.15)
    ui:RegisterForClicks("LeftButtonUp", "RightButtonUp")
    ui:RegisterForDrag("LeftButton")
-   ui:SetScript("OnClick", function(self, button)
+   ui:SetScript("OnClick", function(_, button)
       CursorTo(row, index)
       if button == "RightButton" then Empty(state.set, row, index)
-      elseif GetCursorInfo() then DropOn(state.set, row, index)
-      elseif state.picked then Place(state.picked, state.set, row, index)
-      else state.mode = "slot"; Refresh() end
+      elseif GetCursorInfo() then DropOn(state.set, row, index); Placed()
+      elseif state.picked then Place(state.picked, state.set, row, index); Placed()
+      else Refresh() end
    end)
-   ui:SetScript("OnReceiveDrag", function() DropOn(state.set, row, index) end)
+   ui:SetScript("OnReceiveDrag", function() DropOn(state.set, row, index); Placed() end)
    ui:SetScript("OnDragStart", function()
       local slot = ActionSlot(state.set, row, index)
       if slot and not InCombatLockdown() then PickupAction(slot); Refresh() end
@@ -538,36 +645,10 @@ local function SlotButton(parent, row, index, size, x, y)
    return ui
 end
 
--- One bar: three crosses side by side
-local function BuildBar(parent, row, ox, oy)
-   local label = parent:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-   label:SetPoint("TOPLEFT", parent, "TOPLEFT", ox, oy)
-   label:SetText(ROWS[row].label)
-   local x = ox
-   for _, cross in ipairs(CROSSES) do
-      local size = cross.small and SMALL or S
-      local step = size + 4
-      local cx, cy = x + step * 1.5, oy - 28 - step * 1.5
-      for _, place in ipairs({ { "up", 0, 1 }, { "left", -1, 0 }, { "right", 1, 0 }, { "down", 0, -1 } }) do
-         local index = cross[place[1]]
-         slotsUI[#slotsUI + 1] = SlotButton(parent, row, index, size, cx + place[2] * step, cy + place[3] * step)
-      end
-      local name = parent:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-      name:SetPoint("TOP", parent, "TOPLEFT", cx, cy - step * 1.5 - 4)
-      name:SetText(cross.name)
-      x = x + step * 3 + 14
-   end
-end
-
 local function Build()
-   local listW = 300
-   local barW = (S + 4) * 3 * 2 + (SMALL + 4) * 3 + 28
-   local W = 16 + listW + 24 + barW * 2 + 24 + 16
-   local barH = 28 + (S + 4) * 3 + 22
-   local H = 70 + math.max(VISIBLE * ROW_H, barH * 2 + 10) + 44
    win = CreateFrame("Frame", "CrossHotbarEditorFrame", UIParent, "BackdropTemplate")
-   win:SetSize(W, H)
-   win:SetPoint("CENTER", 0, 40)
+   win:SetSize(LIST_W + 32, 500)
+   win:SetPoint("CENTER", 0, 60)
    win:SetFrameStrata("DIALOG")
    win:SetToplevel(true)
    win:EnableMouse(true)
@@ -579,40 +660,39 @@ local function Build()
    if win.SetBackdrop then
       win:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
                         edgeSize = 14, insets = { left = 3, right = 3, top = 3, bottom = 3 } })
-      win:SetBackdropColor(0.04, 0.05, 0.08, 0.95)
-      win:SetBackdropBorderColor(0.5, 0.5, 0.6, 1)
+      win:SetBackdropColor(0.10, 0.11, 0.15, 0.96)
+      win:SetBackdropBorderColor(0.6, 0.6, 0.7, 1)
    end
    tinsert(UISpecialFrames, win:GetName())
 
    local title = win:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
    title:SetPoint("TOPLEFT", 16, -12)
-   title:SetText("Crossbar editor")
-   setText = win:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
-   setText:SetPoint("TOPLEFT", 16 + listW + 24, -12)
+   title:SetText("Crossbar")
+   setText = win:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+   setText:SetPoint("LEFT", title, "RIGHT", 14, 0)
    local close = CreateFrame("Button", nil, win, "UIPanelCloseButton")
    close:SetPoint("TOPRIGHT", -2, -2)
    tabText = win:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-   tabText:SetPoint("TOPLEFT", 16, -42)
+   tabText:SetPoint("TOPLEFT", 16, -40)
 
+   -- step 1: the list
    local list = CreateFrame("Frame", nil, win)
-   list:SetPoint("TOPLEFT", 12, -64)
-   list:SetSize(listW, VISIBLE * ROW_H)
+   win.list = list
+   list:SetPoint("TOPLEFT", 12, -62)
+   list:SetSize(LIST_W, VISIBLE * ROW_H)
    list:EnableMouseWheel(true)
    list:SetScript("OnMouseWheel", function(_, delta) MoveList(-delta * 3) end)
    for i = 1, VISIBLE do
       local ui = CreateFrame("Button", nil, list)
-      ui:SetSize(listW, ROW_H - 2)
+      ui:SetSize(LIST_W, ROW_H - 2)
       ui:SetPoint("TOPLEFT", 0, -(i - 1) * ROW_H)
       ui.icon = ui:CreateTexture(nil, "ARTWORK"); ui.icon:SetSize(22, 22); ui.icon:SetPoint("LEFT", 2, 0)
       ui.text = ui:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); ui.text:SetPoint("LEFT", ui.icon, "RIGHT", 6, 0)
-      ui.text:SetWidth(180); ui.text:SetJustifyH("LEFT"); ui.text:SetWordWrap(false)
+      ui.text:SetWidth(200); ui.text:SetJustifyH("LEFT"); ui.text:SetWordWrap(false)
       ui.sub = ui:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall"); ui.sub:SetPoint("RIGHT", -4, 0)
-      ui.light = ui:CreateTexture(nil, "BACKGROUND"); ui.light:SetAllPoints(); ui.light:SetColorTexture(1, 0.82, 0, 0.2)
-      ui.picked = ui:CreateTexture(nil, "BORDER"); ui.picked:SetAllPoints(); ui.picked:SetColorTexture(0.2, 0.8, 1, 0.25)
+      ui.light = ui:CreateTexture(nil, "BACKGROUND"); ui.light:SetAllPoints(); ui.light:SetColorTexture(1, 0.82, 0, 0.25)
       local hl = ui:CreateTexture(nil, "HIGHLIGHT"); hl:SetAllPoints(); hl:SetColorTexture(1, 1, 1, 0.08)
-      ui:SetScript("OnClick", function()
-         state.sel = state.top + i - 1; state.mode = "list"; Pick()
-      end)
+      ui:SetScript("OnClick", function() state.sel = state.top + i - 1; Pick() end)
       ui:SetScript("OnEnter", function() state.sel = state.top + i - 1; if state.mode == "list" then Refresh() end end)
       ui:RegisterForDrag("LeftButton")
       ui:SetScript("OnDragStart", function()
@@ -622,17 +702,29 @@ local function Build()
       rowsUI[i] = ui
    end
 
-   local bars = CreateFrame("Frame", nil, win)
-   bars:SetPoint("TOPLEFT", list, "TOPRIGHT", 24, 8)
-   bars:SetSize(barW * 2, barH * 2)
-   BuildBar(bars, 1, 0, 0)
-   BuildBar(bars, 2, barW, 0)
-   BuildBar(bars, 3, 0, -barH - 10)
-   BuildBar(bars, 4, barW, -barH - 10)
+   -- step 2: the crossbar
+   assign = CreateFrame("Frame", nil, win)
+   assign:SetPoint("TOPLEFT", 16, -64)
+   assignTitle = win:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
+   assignTitle:SetPoint("TOPLEFT", assign, "TOPLEFT", 0, 26)
+   assignTitle:SetParent(assign)
+   viewText = assign:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+   viewText:SetPoint("TOPRIGHT", win, "TOPRIGHT", -36, -40)
+   for h = 1, 2 do
+      halfLabels[h] = assign:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+   end
+   for row = 1, #ROWS do
+      for c, cross in ipairs(CROSSES) do
+         for _, place in ipairs({ { "up", 0, 1 }, { "left", -1, 0 }, { "right", 1, 0 }, { "down", 0, -1 } }) do
+            slotsUI[#slotsUI + 1] = SlotButton(assign, row, c, cross[place[1]], place[2], place[3])
+         end
+      end
+   end
+   assign:Hide()
 
    legend = win:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-   legend:SetPoint("BOTTOMLEFT", 16, 16)
-   legend:SetPoint("BOTTOMRIGHT", -16, 16)
+   legend:SetPoint("BOTTOMLEFT", 16, 14)
+   legend:SetPoint("BOTTOMRIGHT", -16, 14)
    legend:SetJustifyH("LEFT")
 
    win:SetScript("OnGamePadButtonDown", OnPad)
@@ -645,28 +737,24 @@ local function Build()
       self:EnableGamePadButton(true)
       if self.EnableGamePadStick then self:EnableGamePadStick(true) end
       state.held, state.stickX, state.stickY = {}, 0, 0
-      state.set = ActiveSet()
+      state.set, state.view = ActiveSet(), 1
+      if state.mode ~= "slot" then SetMode("list") end
       Load(); Refresh()
    end)
    win:SetScript("OnHide", function(self)
       self:EnableGamePadButton(false)
       if self.EnableGamePadStick then self:EnableGamePadStick(false) end
-      state.mode, state.picked = "list", nil
+      state.picked = nil
+      SetMode("list")
       GameTooltip:Hide()
       ClearCursor()
    end)
    win:RegisterEvent("PLAYER_REGEN_DISABLED")
    win:RegisterEvent("ACTIONBAR_SLOT_CHANGED")
    win:RegisterEvent("BAG_UPDATE_DELAYED")
-   win:SetScript("OnEvent", function(self, event)
-      if event == "PLAYER_REGEN_DISABLED" then self:Hide()
-      elseif event == "BAG_UPDATE_DELAYED" and state.tab == 2 then Load(); Refresh()
-      else Refresh() end
-   end)
-   win:Hide()
+   win:RegisterEvent("CURSOR_CHANGED")
 
-   -- What's on the cursor, drawn beside it while the editor is open (the
-   -- game doesn't draw it with the pad's cursor)
+   -- What's on the cursor, drawn beside it (the game doesn't with the pad's cursor)
    carry = CreateFrame("Frame", nil, UIParent)
    carry:SetSize(36, 36)
    carry:SetFrameStrata("TOOLTIP")
@@ -680,23 +768,36 @@ local function Build()
       self:ClearAllPoints()
       self:SetPoint("CENTER", UIParent, "BOTTOMLEFT", x / scale + 18, y / scale - 18)
    end)
-   win:RegisterEvent("CURSOR_CHANGED")
-   win:HookScript("OnEvent", function(_, event)
-      if event ~= "CURSOR_CHANGED" then return end
+
+   local function CursorTexture()
       local kind, a, b, c = GetCursorInfo()
-      local texture
       if kind == "spell" then
          local id = c or b
-         texture = (C_Spell and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(id)) or (GetSpellTexture and GetSpellTexture(id))
+         return (C_Spell and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(id)) or (GetSpellTexture and GetSpellTexture(id))
       elseif kind == "item" then
-         texture = (C_Item and C_Item.GetItemIconByID and C_Item.GetItemIconByID(a)) or (GetItemIcon and GetItemIcon(a))
+         return (C_Item and C_Item.GetItemIconByID and C_Item.GetItemIconByID(a)) or (GetItemIcon and GetItemIcon(a))
       elseif kind == "macro" then
-         texture = select(2, GetMacroInfo(a))
+         return select(2, GetMacroInfo(a))
       elseif kind == "action" then
-         texture = GetActionTexture(a)
+         return GetActionTexture(a)
       end
-      if texture and win:IsShown() then carry.icon:SetTexture(texture); carry:Show() else carry:Hide() end
+   end
+
+   win:SetScript("OnEvent", function(self, event)
+      if event == "PLAYER_REGEN_DISABLED" then self:Hide()
+      elseif event == "BAG_UPDATE_DELAYED" and state.tab == 2 then Load(); Refresh()
+      elseif event == "CURSOR_CHANGED" then
+         local texture = self:IsShown() and CursorTexture()
+         if texture then
+            carry.icon:SetTexture(texture); carry:Show()
+            -- (dragging something: show the bar to drop it on)
+            if state.mode == "list" then state.picked = nil; state.view = 1; SetMode("slot"); Refresh() end
+         else
+            carry:Hide()
+         end
+      else Refresh() end
    end)
+   win:Hide()
 end
 
 function E.IsOpen()
@@ -713,8 +814,9 @@ end
 function E.OpenWith(entry)
    if InCombatLockdown() then return end
    if not win then Build() end
+   state.picked, state.view = entry, 1
+   SetMode("slot")
    if not win:IsShown() then win:Show() end
-   state.picked, state.mode = entry, "slot"
    Refresh()
 end
 
