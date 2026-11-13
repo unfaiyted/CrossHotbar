@@ -336,26 +336,28 @@ local gameHidden = false
 local function Apply()
    local s = Settings()
    if not s then return end
+   local inGroup = IsInGroup and IsInGroup() and not (IsInRaid and IsInRaid())
+   -- (the old frames' fade is an animation: fine in a fight)
+   gameHidden = (s.party and inGroup) and true or false
+   GameFrames(gameHidden)
+   local box = addon.GroupNavigator and addon.GroupNavigator.SoftTargetFrame
+   if box then box:SetAlpha(gameHidden and 0 or 1) end
+   -- (the list holds secure buttons: placing, showing and its mouse wait for
+   -- the end of a fight; PLAYER_REGEN_ENABLED runs this again)
+   if InCombatLockdown() then return end
    if s.partyPos then
       holder:ClearAllPoints()
       holder:SetPoint(s.partyPos[1], UIParent, s.partyPos[2], s.partyPos[3], s.partyPos[4])
    end
-   local inGroup = IsInGroup and IsInGroup() and not (IsInRaid and IsInRaid())
    local show = s.party and (inGroup or not s.partyLocked)
-   if not InCombatLockdown() then holder:SetShown(show and true or false) end
-   gameHidden = (s.party and inGroup) and true or false
-   GameFrames(gameHidden)
+   holder:SetShown(show and true or false)
    local unlocked = not s.partyLocked
    holder:EnableMouse(unlocked)
    if holder.SetBackdropColor then holder:SetBackdropColor(0, 0, 0, unlocked and 0.35 or 0) end
    title:SetShown(unlocked)
-   if addon.GroupNavigator and addon.GroupNavigator.AddUnitFrameRefs and not InCombatLockdown() then
+   if addon.GroupNavigator and addon.GroupNavigator.AddUnitFrameRefs then
       addon.GroupNavigator:AddUnitFrameRefs()
    end
-   -- (CrossHotbar's navigation box is replaced by the rows' own highlight; a
-   -- frame of CrossHotbar's, so its alpha is ours to set; raids keep it)
-   local box = addon.GroupNavigator and addon.GroupNavigator.SoftTargetFrame
-   if box then box:SetAlpha((s.party and inGroup) and 0 or 1) end
 end
 P.Apply = Apply
 
