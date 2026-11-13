@@ -27,10 +27,24 @@ local RESERVED = {
    PADFORWARD = true,   -- Menu: the game's radial / menus (and Improved Forever's double press)
 }
 
+-- R3 too, when Improved Forever's Wheel module is loaded: its wheels open on
+-- R3 (and L1 / L2 / R1 / R2 + R3) through a priority override binding of
+-- their own, which CrossHotbar's (re-applied after every fight and focus
+-- change) kept replacing. Checked when the bindings are made (all addons
+-- are loaded by then).
+local function WheelLoaded()
+   local addons = _G.C_AddOns
+   local loaded = addons and addons.IsAddOnLoaded and addons.IsAddOnLoaded("ImprovedForever_Wheel")
+   if loaded == nil and IsAddOnLoaded then loaded = IsAddOnLoaded("ImprovedForever_Wheel") end
+   return loaded and true or false
+end
+
 function addon:ForeverPadActions(padactions)
+   local wheel = WheelLoaded()
    local filtered = {}
    for button, attributes in pairs(padactions) do
-      if not RESERVED[attributes.BIND] then filtered[button] = attributes end
+      local bind = attributes.BIND
+      if not RESERVED[bind] and not (wheel and bind == "PADRSTICK") then filtered[button] = attributes end
    end
    return filtered
 end
